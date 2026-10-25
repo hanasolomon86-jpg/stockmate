@@ -1,29 +1,47 @@
 # StockMate
 
-## Project Descripion
+## Project Overview
 
-StockMate is an inventory mamagement system
-for a neighborhood store.
+StockMate is a lightweight inventory management web application for a neighborhood grocery store.
 
-The system will manage products, sales, stock movements,
-expiration dates, and supplier orders.
+The application helps manage products, sales, stock movements, expiration dates, and supplier orders.
 
-## Main Features
+## Planned Features
 
-- Product management
-- Sales and automatic inventory updates
-- Expiration date tracking
+- Product and category management
+- Sales with automatic inventory updates
+- Stock batch and expiration date tracking
+- Expired and damaged product handling
 - Supplier returns and product disposal
-- Automatic low-stock alerts
-- Inventory history
+- Low-stock alerts and purchase order drafts
+- Inventory movement history for each product
+- Dashboard with inventory alerts and open orders
 
-## Technologies
+## Planned Technology Stack
 
-- JavaScript
-- React
-- Node.js and Express
-- PostgreSQL
+- **Frontend:** React and JavaScript
+- **Styling:** CSS
+- **Build Tool:** Vite
+- **Backend:** Node.js and Express
+- **Database:** SQLite
+- **Version Control:** Git and GitHub
+
+## Development Practices
+
+The project will follow an incremental development workflow using Git branches, commits, User Stories, and a Kanban board.
+
+The development process will include automated testing, input validation, error handling, application logging, dependency and license documentation, Docker, and GitHub Actions CI/CD.
 
 ## Project Status
 
-Initial project setup.
+Project planning and development environment setup.
+
+## Installation and Usage
+
+Installation and usage instructions will be added as the application is implemented.
+
+## Project Management
+
+The project backlog and development progress will be tracked using GitHub Projects.
+
+The project backlog and development progress are tracked in [StockMate — Development Board](https://github.com/users/hanasolomon86-jpg/projects/1/views/1).
