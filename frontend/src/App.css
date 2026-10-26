@@ -1,0 +1,175 @@
+.app-shell {
+  min-height: 100vh;
+  width: 100%;
+  color: #24352d;
+  background-color: #f7f8f5;
+  text-align: left;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 6%;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e4e9e3;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #24352d;
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background-color: #2f6b4f;
+  color: #ffffff;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.brand-name {
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.header-label {
+  color: #78847b;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+}
+
+.app-main {
+  width: min(100% - 48px, 1000px);
+  margin: 0 auto;
+  padding: 64px 0 32px;
+}
+
+.welcome-section {
+  margin-bottom: 36px;
+}
+
+.eyebrow {
+  margin-bottom: 14px;
+  color: #43805d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+}
+
+.welcome-section h1 {
+  margin: 0 0 16px;
+  color: #24352d;
+  font-size: clamp(32px, 5vw, 46px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -1.2px;
+}
+
+.welcome-description {
+  max-width: 600px;
+  color: #68766d;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.setup-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 28px;
+  background-color: #ffffff;
+  border: 1px solid #e3e9e2;
+  border-radius: 14px;
+}
+
+.setup-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background-color: #e7f3e9;
+  color: #2f6b4f;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.setup-card h2 {
+  margin: 4px 0 8px;
+  color: #24352d;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.setup-card p {
+  color: #68766d;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.app-footer {
+  margin-top: 64px;
+  padding-top: 20px;
+  border-top: 1px solid #e4e9e3;
+  color: #859087;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    padding: 16px 20px;
+  }
+
+  .brand-name {
+    font-size: 20px;
+  }
+
+  .header-label {
+    max-width: 110px;
+    font-size: 10px;
+    text-align: right;
+    line-height: 1.5;
+  }
+
+  .app-main {
+    width: calc(100% - 40px);
+    padding-top: 44px;
+  }
+
+  .welcome-section {
+    margin-bottom: 28px;
+  }
+
+  .welcome-description {
+    font-size: 15px;
+  }
+
+  .setup-card {
+    gap: 14px;
+    padding: 20px;
+  }
+
+  .setup-card h2 {
+    font-size: 17px;
+  }
+
+  .setup-card p {
+    font-size: 14px;
+  }
+
+  .app-footer {
+    margin-top: 44px;
+  }
+}
