@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
 const categories = [
@@ -11,50 +11,6 @@ const categories = [
 
 const units = ['each', 'kg', 'liter', 'pack', 'bottle']
 
-// Temporary sample data.
-// Later, products will be loaded from the SQLite-backed API.
-const initialProducts = [
-  {
-    id: 1,
-    name: 'עגבניות',
-    category: 'Produce',
-    unit: 'kg',
-    salePrice: 8.9,
-    minStock: 8,
-    targetStock: 20,
-    barcode: '7290000000012',
-  },
-  {
-    id: 2,
-    name: 'חלב 3%',
-    category: 'Dairy',
-    unit: 'liter',
-    salePrice: 7.9,
-    minStock: 10,
-    targetStock: 30,
-    barcode: '7290000000013',
-  },
-  {
-    id: 3,
-    name: 'לחם מחיטה מלאה',
-    category: 'Bakery',
-    unit: 'each',
-    salePrice: 9.5,
-    minStock: 6,
-    targetStock: 18,
-    barcode: '',
-  },
-  {
-    id: 4,
-    name: 'שמן זית',
-    category: 'Pantry',
-    unit: 'bottle',
-    salePrice: 32.9,
-    minStock: 4,
-    targetStock: 12,
-    barcode: '7290000000014',
-  },
-]
 
 const emptyForm = {
   name: '',
@@ -67,7 +23,33 @@ const emptyForm = {
 }
 
 function App() {
-  const [products, setProducts] = useState(initialProducts)
+  const [products, setProducts] = useState([])
+const [isLoadingProducts, setIsLoadingProducts] = useState(true)
+const [productsError, setProductsError] = useState('')
+
+useEffect(() => {
+  async function loadProducts() {
+    try {
+      const response = await fetch('/api/products')
+
+      if (!response.ok) {
+        throw new Error('Failed to load products.')
+      }
+
+      const data = await response.json()
+      setProducts(data)
+    } catch (error) {
+      console.error('Failed to load products:', error)
+      setProductsError(
+        'Could not load products. Please check that the server is running.',
+      )
+    } finally {
+      setIsLoadingProducts(false)
+    }
+  }
+
+  loadProducts()
+}, [])
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -101,6 +83,7 @@ function App() {
       salePrice: String(product.salePrice),
       minStock: String(product.minStock),
       targetStock: String(product.targetStock),
+      barcode: product.barcode ?? '',
     })
     setFormError('')
     setIsFormOpen(true)
@@ -122,7 +105,7 @@ function App() {
     }))
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault()
 
     const name = formData.name.trim()
@@ -173,7 +156,7 @@ function App() {
       products.some(
         (product) =>
           product.id !== editingProductId &&
-          product.barcode.toLowerCase() === barcode.toLowerCase(),
+          (product.barcode ?? '').toLowerCase() === barcode.toLowerCase(),
       )
 
     if (barcodeExists) {
@@ -181,31 +164,62 @@ function App() {
       return
     }
 
-    const savedProduct = {
-      id: editingProductId ?? Date.now(),
-      name,
-      category: formData.category,
-      unit: formData.unit,
-      salePrice,
-      minStock,
-      targetStock,
-      barcode,
-    }
+    try {
+  const isEditing = editingProductId !== null
 
-    if (editingProductId !== null) {
-      setProducts((previousProducts) =>
-        previousProducts.map((product) =>
-          product.id === editingProductId ? savedProduct : product,
-        ),
-      )
-    } else {
-      setProducts((previousProducts) => [
-        ...previousProducts,
-        savedProduct,
-      ])
-    }
+  const response = await fetch(
+    isEditing
+      ? `/api/products/${editingProductId}`
+      : '/api/products',
+    {
+      method: isEditing ? 'PUT' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name,
+        category: formData.category,
+        unit: formData.unit,
+        salePrice,
+        minStock,
+        targetStock,
+        barcode,
+      }),
+    },
+  )
 
-    closeForm()
+  const savedProduct = await response.json()
+
+  if (!response.ok) {
+    setFormError(
+      savedProduct.error || 'Failed to save product.',
+    )
+    return
+  }
+
+  if (isEditing) {
+    setProducts((previousProducts) =>
+      previousProducts.map((product) =>
+        product.id === savedProduct.id
+          ? savedProduct
+          : product,
+      ),
+    )
+  } else {
+    setProducts((previousProducts) => [
+      ...previousProducts,
+      savedProduct,
+    ])
+  }
+
+  closeForm()
+} catch (error) {
+  console.error('Failed to save product:', error)
+
+  setFormError(
+    'Could not save product. Please check that the server is running.',
+  )
+}
   }
 
   return (
@@ -274,54 +288,60 @@ function App() {
             <span>{filteredProducts.length} products</span>
           </div>
 
-          {filteredProducts.length === 0 ? (
-            <p className="empty-state">
-              No products found. Try a different search or category.
-            </p>
-          ) : (
-            <div className="table-wrapper">
-              <table className="product-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Product</th>
-                    <th scope="col">Category</th>
-                    <th scope="col">Unit</th>
-                    <th scope="col">Sale price</th>
-                    <th scope="col">Min. stock</th>
-                    <th scope="col">Target stock</th>
-                    <th scope="col">Barcode</th>
-                    <th scope="col">Actions</th>
-                  </tr>
-                </thead>
+          {isLoadingProducts ? (
+  <p className="empty-state">Loading products...</p>
+) : productsError ? (
+  <p className="empty-state" role="alert">
+    {productsError}
+  </p>
+) : filteredProducts.length === 0 ? (
+  <p className="empty-state">
+    No products found. Try a different search or category.
+  </p>
+) : (
+  <div className="table-wrapper">
+    <table className="product-table">
+      <thead>
+        <tr>
+          <th scope="col">Product</th>
+          <th scope="col">Category</th>
+          <th scope="col">Unit</th>
+          <th scope="col">Sale price</th>
+          <th scope="col">Min. stock</th>
+          <th scope="col">Target stock</th>
+          <th scope="col">Barcode</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
 
-                <tbody>
-                  {filteredProducts.map((product) => (
-                    <tr key={product.id}>
-                      <td className="product-name" dir="auto">
-                        {product.name}
-                      </td>
-                      <td>{product.category}</td>
-                      <td>{product.unit}</td>
-                      <td>₪{product.salePrice.toFixed(2)}</td>
-                      <td>{product.minStock}</td>
-                      <td>{product.targetStock}</td>
-                      <td>{product.barcode || '—'}</td>
-                      <td>
-                        <button
-                          className="text-button"
-                          type="button"
-                          onClick={() => openEditForm(product)}
-                          aria-label={`Edit ${product.name}`}
-                        >
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      <tbody>
+        {filteredProducts.map((product) => (
+          <tr key={product.id}>
+            <td className="product-name" dir="auto">
+              {product.name}
+            </td>
+            <td>{product.category}</td>
+            <td>{product.unit}</td>
+            <td>₪{product.salePrice.toFixed(2)}</td>
+            <td>{product.minStock}</td>
+            <td>{product.targetStock}</td>
+            <td>{product.barcode || '—'}</td>
+            <td>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => openEditForm(product)}
+                aria-label={`Edit ${product.name}`}
+              >
+                Edit
+              </button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)}
         </section>
 
         {isFormOpen && (
