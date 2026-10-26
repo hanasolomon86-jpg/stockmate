@@ -29,4 +29,35 @@ db.exec(`
   )
 `)
 
+// Create the categories table.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+// Insert the initial categories without duplicating existing ones.
+const defaultCategories = [
+  'Produce',
+  'Dairy',
+  'Bakery',
+  'Pantry',
+  'Frozen',
+]
+
+const insertCategory = db.prepare(`
+  INSERT OR IGNORE INTO categories (name)
+  VALUES (?)
+`)
+
+const seedCategories = db.transaction(() => {
+  for (const category of defaultCategories) {
+    insertCategory.run(category)
+  }
+})
+
+seedCategories()
+
 module.exports = db
