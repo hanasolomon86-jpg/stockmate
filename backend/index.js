@@ -270,6 +270,43 @@ app.put('/api/products/:id', (req, res) => {
         })
     }
 })
+// Delete an existing product.
+app.delete('/api/products/:id', (req, res) => {
+    const id = Number(req.params.id)
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare(`SELECT id FROM products WHERE id = ?`)
+            .get(id)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        db.prepare('DELETE FROM products WHERE id = ?').run(id)
+
+        console.log(`Product deleted: ${id}`)
+
+        return res.status(200).json({
+            message: 'Product deleted successfully.',
+            id,
+        })
+    } catch (error) {
+        console.error('Failed to delete product:', error.message)
+
+        return res.status(500).json({
+            error: 'Failed to delete product.',
+        })
+    }
+})
 app.listen(PORT, () => {
     console.log(`StockMate API is running at http://localhost:${PORT}`)
 })

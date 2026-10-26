@@ -56,6 +56,7 @@ useEffect(() => {
   const [editingProductId, setEditingProductId] = useState(null)
   const [formData, setFormData] = useState(emptyForm)
   const [formError, setFormError] = useState('')
+  const [actionError, setActionError] = useState('')
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name
@@ -104,7 +105,39 @@ useEffect(() => {
       [name]: value,
     }))
   }
+async function handleDelete(product) {
+  const confirmed = window.confirm(
+    `Are you sure you want to delete "${product.name}"?`,
+  )
 
+  if (!confirmed) {
+    return
+  }
+
+  setActionError('')
+
+  try {
+    const response = await fetch(`/api/products/${product.id}`, {
+      method: 'DELETE',
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to delete product.')
+    }
+
+    setProducts((previousProducts) =>
+      previousProducts.filter((item) => item.id !== product.id),
+    )
+  } catch (error) {
+    console.error('Failed to delete product:', error)
+
+    setActionError(
+      error.message || 'Could not delete product. Please try again.',
+    )
+  }
+}
   async function handleSubmit(event) {
     event.preventDefault()
 
@@ -287,6 +320,11 @@ useEffect(() => {
             <h2>Product catalog</h2>
             <span>{filteredProducts.length} products</span>
           </div>
+          {actionError && (
+  <p className="form-error" role="alert">
+    {actionError}
+  </p>
+)}
 
           {isLoadingProducts ? (
   <p className="empty-state">Loading products...</p>
@@ -327,15 +365,24 @@ useEffect(() => {
             <td>{product.targetStock}</td>
             <td>{product.barcode || '—'}</td>
             <td>
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => openEditForm(product)}
-                aria-label={`Edit ${product.name}`}
-              >
-                Edit
-              </button>
-            </td>
+  <button
+    className="text-button"
+    type="button"
+    onClick={() => openEditForm(product)}
+    aria-label={`Edit ${product.name}`}
+  >
+    Edit
+  </button>
+
+  <button
+    className="text-button delete-button"
+    type="button"
+    onClick={() => handleDelete(product)}
+    aria-label={`Delete ${product.name}`}
+  >
+    Delete
+  </button>
+</td>
           </tr>
         ))}
       </tbody>
