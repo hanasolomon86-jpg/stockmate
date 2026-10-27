@@ -1,8 +1,31 @@
 const express = require('express')
 const db = require('./database')
+const { logEvent } = require('./logger')
 
 const app = express()
+// Log every incoming request without recording request bodies or headers.
+app.use((req, res, next) => {
+    const startedAt = Date.now()
 
+    res.on('finish', () => {
+        const statusCode = res.statusCode
+        const level =
+            statusCode >= 500
+                ? 'error'
+                : statusCode >= 400
+                    ? 'warn'
+                    : 'info'
+
+        logEvent(level, 'http_request', {
+            method: req.method,
+            path: req.path,
+            statusCode,
+            durationMs: Date.now() - startedAt,
+        })
+    })
+
+    next()
+})
 app.use(express.json())
 
 // Reusable list of product fields returned by the API.
@@ -36,7 +59,7 @@ app.get('/api/products', (req, res) => {
 
         res.status(200).json(products)
     } catch (error) {
-        console.error('Failed to retrieve products:', error.message)
+        logEvent('error', 'products_retrieval_failed', { message: error.message, stack: error.stack })
 
         res.status(500).json({
             error: 'Failed to retrieve products',
@@ -146,7 +169,7 @@ app.post('/api/products', (req, res) => {
             })
         }
 
-        console.error('Failed to create product:', error.message)
+        logEvent('error', 'product_creation_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to create product',
@@ -262,7 +285,7 @@ app.put('/api/products/:id', (req, res) => {
             })
         }
 
-        console.error('Failed to update product:', error.message)
+        logEvent('error', 'product_update_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to update product',
@@ -299,7 +322,7 @@ app.delete('/api/products/:id', (req, res) => {
             id,
         })
     } catch (error) {
-        console.error('Failed to delete product:', error.message)
+        logEvent('error', 'product_deletion_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to delete product.',
@@ -322,7 +345,7 @@ app.get('/api/categories', (req, res) => {
 
         return res.status(200).json(categories)
     } catch (error) {
-        console.error('Failed to retrieve categories:', error.message)
+        logEvent('error', 'categories_retrieval_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to retrieve categories',
@@ -373,7 +396,7 @@ app.post('/api/categories', (req, res) => {
             })
         }
 
-        console.error('Failed to create category:', error.message)
+        logEvent('error', 'category_creation_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to create category.',
@@ -446,7 +469,7 @@ app.put('/api/categories/:id', (req, res) => {
             })
         }
 
-        console.error('Failed to update category:', error.message)
+        logEvent('error', 'category_update_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to update category.',
@@ -492,7 +515,7 @@ app.delete('/api/categories/:id', (req, res) => {
             id,
         })
     } catch (error) {
-        console.error('Failed to delete category:', error.message)
+        logEvent('error', 'category_deletion_failed', { message: error.message, stack: error.stack })
 
         return res.status(500).json({
             error: 'Failed to delete category.',
