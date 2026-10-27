@@ -1,6 +1,7 @@
 const express = require('express')
 const db = require('./database')
 const { logEvent } = require('./logger')
+const path = require('node:path')
 
 const app = express()
 // Log every incoming request without recording request bodies or headers.
@@ -521,5 +522,20 @@ app.delete('/api/categories/:id', (req, res) => {
             error: 'Failed to delete category.',
         })
     }
+})
+// Serve the built React frontend.
+const frontendDistPath = path.join(__dirname, '..', 'frontend', 'dist')
+
+app.use(express.static(frontendDistPath))
+
+// Return the React app for frontend routes, but leave API routes untouched.
+app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) {
+        return next()
+    }
+
+    res.sendFile(path.join(frontendDistPath, 'index.html'), (error) => {
+        if (error) next(error)
+    })
 })
 module.exports = app
