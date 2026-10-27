@@ -7,7 +7,8 @@ const dataDirectory = path.join(__dirname, 'data')
 fs.mkdirSync(dataDirectory, { recursive: true })
 
 // Open the SQLite database.
-const databasePath = path.join(dataDirectory, 'stockmate.db')
+const databasePath =
+  process.env.STOCKMATE_DB_PATH || path.join(dataDirectory, 'stockmate.db')
 const db = new Database(databasePath)
 
 // Enforce foreign key constraints.
