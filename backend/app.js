@@ -985,6 +985,979 @@ app.delete('/api/products/:id', (req, res) => {
         })
     }
 })
+
+// Reusable supplier fields and optional-field validation.
+const supplierFields = `
+    id,
+    name,
+    contact_name AS contactName,
+    phone,
+    email,
+    notes,
+    is_active AS isActive,
+    created_at AS createdAt,
+    updated_at AS updatedAt
+`
+
+function validateSupplierOptionalFields(body, existing = null) {
+    const definitions = [
+        { key: 'contactName', column: 'contact_name', label: 'Contact name', max: 100 },
+        { key: 'phone', column: 'phone', label: 'Phone', max: 30 },
+        { key: 'email', column: 'email', label: 'Email', max: 254 },
+        { key: 'notes', column: 'notes', label: 'Notes', max: 1000 },
+    ]
+
+    const values = {}
+
+    for (const field of definitions) {
+        let value = body[field.key]
+
+        if (value === undefined && existing) {
+            value = existing[field.column]
+        }
+
+        if (value === undefined || value === null) {
+            values[field.key] = null
+            continue
+        }
+
+        if (typeof value !== 'string') {
+            return { error: `${field.label} must be text.` }
+        }
+
+        value = value.trim()
+
+        if (value.length > field.max) {
+            return {
+                error: `${field.label} cannot exceed ${field.max} characters.`,
+            }
+        }
+
+        values[field.key] = value || null
+    }
+
+    if (
+        values.email &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)
+    ) {
+        return { error: 'Please provide a valid email address.' }
+    }
+
+    return { values }
+}
+
+// Retrieve all suppliers.
+app.get('/api/suppliers', (req, res) => {
+    try {
+        const suppliers = db
+            .prepare(`
+                SELECT ${supplierFields}
+                FROM suppliers
+                ORDER BY is_active DESC, name COLLATE NOCASE
+            `)
+            .all()
+
+        return res.status(200).json(suppliers)
+    } catch (error) {
+        logEvent('error', 'suppliers_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve suppliers.',
+        })
+    }
+})
+
+// Create a supplier.
+app.post('/api/suppliers', (req, res) => {
+    const body = req.body ?? {}
+    const name = body.name
+
+    if (typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({
+            error: 'Supplier name is required.',
+        })
+    }
+
+    const cleanName = name.trim()
+
+    if (cleanName.length > 100) {
+        return res.status(400).json({
+            error: 'Supplier name cannot exceed 100 characters.',
+        })
+    }
+
+    const validation = validateSupplierOptionalFields(body)
+
+    if (validation.error) {
+        return res.status(400).json({
+            error: validation.error,
+        })
+    }
+
+    try {
+        const { contactName, phone, email, notes } = validation.values
+
+        const result = db
+            .prepare(`
+                INSERT INTO suppliers (
+                    name, contact_name, phone, email, notes
+                )
+                VALUES (?, ?, ?, ?, ?)
+            `)
+            .run(cleanName, contactName, phone, email, notes)
+
+        const supplier = db
+            .prepare(`
+                SELECT ${supplierFields}
+                FROM suppliers
+                WHERE id = ?
+            `)
+            .get(result.lastInsertRowid)
+
+        return res.status(201).json(supplier)
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'A supplier with this name already exists.',
+            })
+        }
+
+        logEvent('error', 'supplier_creation_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to create supplier.',
+        })
+    }
+})
+
+// Update supplier details or active status.
+app.put('/api/suppliers/:id', (req, res) => {
+    const id = Number(req.params.id)
+    const body = req.body ?? {}
+    const name = body.name
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid supplier ID.',
+        })
+    }
+
+    if (typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({
+            error: 'Supplier name is required.',
+        })
+    }
+
+    const cleanName = name.trim()
+
+    if (cleanName.length > 100) {
+        return res.status(400).json({
+            error: 'Supplier name cannot exceed 100 characters.',
+        })
+    }
+
+    if (
+        body.isActive !== undefined &&
+        ![true, false, 0, 1].includes(body.isActive)
+    ) {
+        return res.status(400).json({
+            error: 'isActive must be true or false.',
+        })
+    }
+
+    try {
+        const existing = db
+            .prepare('SELECT * FROM suppliers WHERE id = ?')
+            .get(id)
+
+        if (!existing) {
+            return res.status(404).json({
+                error: 'Supplier not found.',
+            })
+        }
+
+        const validation = validateSupplierOptionalFields(body, existing)
+
+        if (validation.error) {
+            return res.status(400).json({
+                error: validation.error,
+            })
+        }
+
+        const { contactName, phone, email, notes } = validation.values
+        const isActive =
+            body.isActive === undefined
+                ? existing.is_active
+                : Number(body.isActive)
+
+        db.prepare(`
+            UPDATE suppliers
+            SET
+                name = ?,
+                contact_name = ?,
+                phone = ?,
+                email = ?,
+                notes = ?,
+                is_active = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(
+            cleanName,
+            contactName,
+            phone,
+            email,
+            notes,
+            isActive,
+            id,
+        )
+
+        const supplier = db
+            .prepare(`
+                SELECT ${supplierFields}
+                FROM suppliers
+                WHERE id = ?
+            `)
+            .get(id)
+
+        return res.status(200).json(supplier)
+    } catch (error) {
+        if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                error: 'A supplier with this name already exists.',
+            })
+        }
+
+        logEvent('error', 'supplier_update_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to update supplier.',
+        })
+    }
+})
+
+// Return a purchase order with supplier details and its line items.
+function getPurchaseOrderById(orderId) {
+    const order = db
+        .prepare(`
+            SELECT
+                po.id,
+                po.supplier_id AS supplierId,
+                s.name AS supplierName,
+                po.status,
+                po.notes,
+                po.ordered_at AS orderedAt,
+                po.created_at AS createdAt,
+                po.updated_at AS updatedAt
+            FROM purchase_orders AS po
+            JOIN suppliers AS s ON s.id = po.supplier_id
+            WHERE po.id = ?
+        `)
+        .get(orderId)
+
+    if (!order) {
+        return null
+    }
+
+    const items = db
+        .prepare(`
+            SELECT
+                poi.id,
+                poi.product_id AS productId,
+                p.name AS productName,
+                p.unit,
+                poi.ordered_quantity AS orderedQuantity,
+                poi.received_quantity AS receivedQuantity,
+                poi.ordered_quantity - poi.received_quantity
+                    AS remainingQuantity,
+                poi.unit_cost AS unitCost
+            FROM purchase_order_items AS poi
+            JOIN products AS p ON p.id = poi.product_id
+            WHERE poi.purchase_order_id = ?
+            ORDER BY poi.id
+        `)
+        .all(orderId)
+
+    return { ...order, items }
+}
+
+// Retrieve all purchase orders, including their items.
+app.get('/api/purchase-orders', (req, res) => {
+    try {
+        const orders = db
+            .prepare(`
+                SELECT id
+                FROM purchase_orders
+                ORDER BY created_at DESC, id DESC
+            `)
+            .all()
+            .map(({ id }) => getPurchaseOrderById(id))
+
+        return res.status(200).json(orders)
+    } catch (error) {
+        logEvent('error', 'purchase_orders_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve purchase orders.',
+        })
+    }
+})
+
+// Create a purchase order in draft status.
+app.post('/api/purchase-orders', (req, res) => {
+    const body = req.body ?? {}
+    const supplierId = Number(body.supplierId)
+    const { items } = body
+
+    if (!Number.isSafeInteger(supplierId) || supplierId <= 0) {
+        return res.status(400).json({
+            error: 'A valid supplier ID is required.',
+        })
+    }
+
+    if (
+        body.notes !== undefined &&
+        body.notes !== null &&
+        typeof body.notes !== 'string'
+    ) {
+        return res.status(400).json({
+            error: 'Notes must be text.',
+        })
+    }
+
+    const notes = body.notes?.trim() || null
+
+    if (notes && notes.length > 1000) {
+        return res.status(400).json({
+            error: 'Notes cannot exceed 1000 characters.',
+        })
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+            error: 'A purchase order must contain at least one item.',
+        })
+    }
+
+    if (items.length > 100) {
+        return res.status(400).json({
+            error: 'A purchase order cannot contain more than 100 items.',
+        })
+    }
+
+    const cleanItems = []
+    const productIds = new Set()
+
+    for (const item of items) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            return res.status(400).json({
+                error: 'Each purchase order item must be an object.',
+            })
+        }
+
+        const productId = Number(item.productId)
+        const { quantity, unitCost } = item
+
+        if (!Number.isSafeInteger(productId) || productId <= 0) {
+            return res.status(400).json({
+                error: 'Each item must have a valid product ID.',
+            })
+        }
+
+        if (productIds.has(productId)) {
+            return res.status(400).json({
+                error: 'A product can appear only once in an order.',
+            })
+        }
+
+        if (
+            typeof quantity !== 'number' ||
+            !Number.isFinite(quantity) ||
+            quantity <= 0
+        ) {
+            return res.status(400).json({
+                error: 'Ordered quantity must be a positive number.',
+            })
+        }
+
+        if (
+            typeof unitCost !== 'number' ||
+            !Number.isFinite(unitCost) ||
+            unitCost < 0
+        ) {
+            return res.status(400).json({
+                error: 'Unit cost must be a valid non-negative number.',
+            })
+        }
+
+        productIds.add(productId)
+        cleanItems.push({ productId, quantity, unitCost })
+    }
+
+    try {
+        const supplier = db
+            .prepare(`
+                SELECT id, is_active AS isActive
+                FROM suppliers
+                WHERE id = ?
+            `)
+            .get(supplierId)
+
+        if (!supplier) {
+            return res.status(404).json({
+                error: 'Supplier not found.',
+            })
+        }
+
+        if (!supplier.isActive) {
+            return res.status(409).json({
+                error: 'Cannot create an order for an inactive supplier.',
+            })
+        }
+
+        const findProduct = db.prepare(
+            'SELECT id FROM products WHERE id = ?',
+        )
+
+        for (const item of cleanItems) {
+            if (!findProduct.get(item.productId)) {
+                return res.status(404).json({
+                    error: `Product ${item.productId} not found.`,
+                })
+            }
+        }
+
+        const createOrder = db.transaction(() => {
+            const orderResult = db
+                .prepare(`
+                    INSERT INTO purchase_orders (supplier_id, notes)
+                    VALUES (?, ?)
+                `)
+                .run(supplierId, notes)
+
+            const orderId = Number(orderResult.lastInsertRowid)
+
+            const insertItem = db.prepare(`
+                INSERT INTO purchase_order_items (
+                    purchase_order_id,
+                    product_id,
+                    ordered_quantity,
+                    unit_cost
+                )
+                VALUES (?, ?, ?, ?)
+            `)
+
+            for (const item of cleanItems) {
+                insertItem.run(
+                    orderId,
+                    item.productId,
+                    item.quantity,
+                    item.unitCost,
+                )
+            }
+
+            return orderId
+        })
+
+        const orderId = createOrder()
+        const order = getPurchaseOrderById(orderId)
+
+        logEvent('info', 'purchase_order_created', {
+            orderId,
+            supplierId,
+            itemCount: cleanItems.length,
+        })
+
+        return res.status(201).json(order)
+    } catch (error) {
+        logEvent('error', 'purchase_order_creation_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to create purchase order.',
+        })
+    }
+})
+
+// Retrieve one purchase order by ID.
+app.get('/api/purchase-orders/:id', (req, res) => {
+    const id = Number(req.params.id)
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid purchase order ID.',
+        })
+    }
+
+    try {
+        const order = getPurchaseOrderById(id)
+
+        if (!order) {
+            return res.status(404).json({
+                error: 'Purchase order not found.',
+            })
+        }
+
+        return res.status(200).json(order)
+    } catch (error) {
+        logEvent('error', 'purchase_order_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve purchase order.',
+        })
+    }
+})
+
+// Update a purchase order's workflow status.
+app.patch('/api/purchase-orders/:id/status', (req, res) => {
+    const id = Number(req.params.id)
+    const { status } = req.body ?? {}
+
+    if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({
+            error: 'Invalid purchase order ID.',
+        })
+    }
+
+    if (!['ordered', 'cancelled'].includes(status)) {
+        return res.status(400).json({
+            error: 'Status must be ordered or cancelled.',
+        })
+    }
+
+    try {
+        const result = db.transaction(() => {
+            const order = db
+                .prepare(`
+                    SELECT id, status
+                    FROM purchase_orders
+                    WHERE id = ?
+                `)
+                .get(id)
+
+            if (!order) {
+                return { error: 'not_found' }
+            }
+
+            // Repeating the current status is harmless.
+            if (order.status === status) {
+                return { orderId: id }
+            }
+
+            if (status === 'ordered') {
+                if (order.status !== 'draft') {
+                    return { error: 'invalid_transition' }
+                }
+
+                const itemCount = db
+                    .prepare(`
+                        SELECT COUNT(*) AS count
+                        FROM purchase_order_items
+                        WHERE purchase_order_id = ?
+                    `)
+                    .get(id).count
+
+                if (itemCount === 0) {
+                    return { error: 'empty_order' }
+                }
+
+                db.prepare(`
+                    UPDATE purchase_orders
+                    SET
+                        status = 'ordered',
+                        ordered_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `).run(id)
+            } else {
+                // An order can only be cancelled before any stock is received.
+                if (!['draft', 'ordered'].includes(order.status)) {
+                    return { error: 'invalid_transition' }
+                }
+
+                const receivedQuantity = db
+                    .prepare(`
+                        SELECT COALESCE(
+                            SUM(received_quantity),
+                            0
+                        ) AS quantity
+                        FROM purchase_order_items
+                        WHERE purchase_order_id = ?
+                    `)
+                    .get(id).quantity
+
+                if (receivedQuantity > 0) {
+                    return { error: 'already_received' }
+                }
+
+                db.prepare(`
+                    UPDATE purchase_orders
+                    SET
+                        status = 'cancelled',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                `).run(id)
+            }
+
+            return { orderId: id }
+        })()
+
+        if (result.error === 'not_found') {
+            return res.status(404).json({
+                error: 'Purchase order not found.',
+            })
+        }
+
+        if (result.error === 'empty_order') {
+            return res.status(409).json({
+                error: 'Cannot order a purchase order without items.',
+            })
+        }
+
+        if (result.error === 'already_received') {
+            return res.status(409).json({
+                error: 'Cannot cancel an order after stock has been received.',
+            })
+        }
+
+        if (result.error === 'invalid_transition') {
+            return res.status(409).json({
+                error: 'This purchase order status transition is not allowed.',
+            })
+        }
+
+        const order = getPurchaseOrderById(id)
+
+        logEvent('info', 'purchase_order_status_updated', {
+            orderId: id,
+            status: order.status,
+        })
+
+        return res.status(200).json(order)
+    } catch (error) {
+        logEvent('error', 'purchase_order_status_update_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to update purchase order status.',
+        })
+    }
+})
+
+// Receive some or all of the items in an ordered purchase order.
+app.post('/api/purchase-orders/:id/receive', (req, res) => {
+    const orderId = Number(req.params.id)
+    const { items } = req.body ?? {}
+
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid purchase order ID.',
+        })
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+            error: 'At least one item must be received.',
+        })
+    }
+
+    if (items.length > 100) {
+        return res.status(400).json({
+            error: 'A single receipt cannot contain more than 100 items.',
+        })
+    }
+
+    const cleanItems = []
+    const seenItemIds = new Set()
+
+    for (const item of items) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            return res.status(400).json({
+                error: 'Each received item must be an object.',
+            })
+        }
+
+        const itemId = Number(item.itemId)
+        const { quantity } = item
+
+        if (!Number.isSafeInteger(itemId) || itemId <= 0) {
+            return res.status(400).json({
+                error: 'Each received item must have a valid item ID.',
+            })
+        }
+
+        if (seenItemIds.has(itemId)) {
+            return res.status(400).json({
+                error: 'Each order item may appear only once per receipt.',
+            })
+        }
+
+        if (
+            typeof quantity !== 'number' ||
+            !Number.isFinite(quantity) ||
+            quantity <= 0
+        ) {
+            return res.status(400).json({
+                error: 'Received quantity must be a positive number.',
+            })
+        }
+
+        const rawExpirationDate = item.expirationDate
+        const expirationDate =
+            rawExpirationDate === undefined ||
+                rawExpirationDate === null ||
+                rawExpirationDate === ''
+                ? null
+                : rawExpirationDate
+
+        if (
+            expirationDate !== null &&
+            !isValidDateOnly(expirationDate)
+        ) {
+            return res.status(400).json({
+                error: 'Expiration date must be a valid date in YYYY-MM-DD format.',
+            })
+        }
+
+        seenItemIds.add(itemId)
+        cleanItems.push({
+            itemId,
+            quantity,
+            expirationDate,
+        })
+    }
+
+    try {
+        const result = db.transaction(() => {
+            const order = db
+                .prepare(`
+                    SELECT id, status
+                    FROM purchase_orders
+                    WHERE id = ?
+                `)
+                .get(orderId)
+
+            if (!order) {
+                return { error: 'order_not_found' }
+            }
+
+            if (
+                !['ordered', 'partially_received'].includes(order.status)
+            ) {
+                return { error: 'invalid_status' }
+            }
+
+            const findOrderItem = db.prepare(`
+                SELECT
+                    id,
+                    product_id AS productId,
+                    ordered_quantity AS orderedQuantity,
+                    received_quantity AS receivedQuantity
+                FROM purchase_order_items
+                WHERE id = ? AND purchase_order_id = ?
+            `)
+
+            const validatedItems = []
+
+            // Validate every line before making any database changes.
+            for (const item of cleanItems) {
+                const orderItem = findOrderItem.get(
+                    item.itemId,
+                    orderId,
+                )
+
+                if (!orderItem) {
+                    return { error: 'item_not_found' }
+                }
+
+                const remainingQuantity =
+                    orderItem.orderedQuantity -
+                    orderItem.receivedQuantity
+
+                if (item.quantity > remainingQuantity) {
+                    return {
+                        error: 'excess_quantity',
+                        itemId: item.itemId,
+                        remainingQuantity,
+                    }
+                }
+
+                validatedItems.push({
+                    ...item,
+                    productId: orderItem.productId,
+                })
+            }
+
+            const insertBatch = db.prepare(`
+                INSERT INTO inventory_batches (
+                    product_id,
+                    quantity_received,
+                    quantity_remaining,
+                    expiration_date
+                )
+                VALUES (?, ?, ?, ?)
+            `)
+
+            const updateOrderItem = db.prepare(`
+                UPDATE purchase_order_items
+                SET received_quantity = received_quantity + ?
+                WHERE id = ?
+                  AND received_quantity + ? <= ordered_quantity
+            `)
+
+            const insertMovement = db.prepare(`
+                INSERT INTO inventory_movements (
+                    product_id,
+                    batch_id,
+                    movement_type,
+                    quantity_change
+                )
+                VALUES (?, ?, 'received', ?)
+            `)
+
+            const receivedItems = []
+
+            for (const item of validatedItems) {
+                const batchResult = insertBatch.run(
+                    item.productId,
+                    item.quantity,
+                    item.quantity,
+                    item.expirationDate,
+                )
+
+                const batchId = Number(batchResult.lastInsertRowid)
+
+                const updateResult = updateOrderItem.run(
+                    item.quantity,
+                    item.itemId,
+                    item.quantity,
+                )
+
+                if (updateResult.changes !== 1) {
+                    throw new Error(
+                        'Could not update the received purchase order quantity.',
+                    )
+                }
+
+                insertMovement.run(
+                    item.productId,
+                    batchId,
+                    item.quantity,
+                )
+
+                receivedItems.push({
+                    itemId: item.itemId,
+                    productId: item.productId,
+                    batchId,
+                    quantity: item.quantity,
+                    expirationDate: item.expirationDate,
+                })
+            }
+
+            const totals = db
+                .prepare(`
+                    SELECT
+                        COUNT(*) AS totalItems,
+                        SUM(
+                            CASE
+                                WHEN received_quantity < ordered_quantity
+                                THEN 1
+                                ELSE 0
+                            END
+                        ) AS remainingItems
+                    FROM purchase_order_items
+                    WHERE purchase_order_id = ?
+                `)
+                .get(orderId)
+
+            const newStatus =
+                totals.remainingItems > 0
+                    ? 'partially_received'
+                    : 'received'
+
+            db.prepare(`
+                UPDATE purchase_orders
+                SET
+                    status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `).run(newStatus, orderId)
+
+            return { receivedItems }
+        })()
+
+        if (result.error === 'order_not_found') {
+            return res.status(404).json({
+                error: 'Purchase order not found.',
+            })
+        }
+
+        if (result.error === 'invalid_status') {
+            return res.status(409).json({
+                error: 'Only ordered or partially received orders can receive stock.',
+            })
+        }
+
+        if (result.error === 'item_not_found') {
+            return res.status(404).json({
+                error: 'An item was not found in this purchase order.',
+            })
+        }
+
+        if (result.error === 'excess_quantity') {
+            return res.status(409).json({
+                error: 'Received quantity exceeds the remaining ordered quantity.',
+                itemId: result.itemId,
+                remainingQuantity: result.remainingQuantity,
+            })
+        }
+
+        const order = getPurchaseOrderById(orderId)
+
+        logEvent('info', 'purchase_order_stock_received', {
+            orderId,
+            itemCount: result.receivedItems.length,
+            totalQuantity: result.receivedItems.reduce(
+                (total, item) => total + item.quantity,
+                0,
+            ),
+            status: order.status,
+        })
+
+        return res.status(200).json({
+            ...order,
+            receivedItems: result.receivedItems,
+        })
+    } catch (error) {
+        logEvent('error', 'purchase_order_stock_receipt_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to receive purchase order stock.',
+        })
+    }
+})
+
 // Return all categories stored in SQLite.
 app.get('/api/categories', (req, res) => {
     try {

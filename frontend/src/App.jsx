@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import CategoryManagement from './components/CategoryManagement'
+import SupplierManagement from './components/SupplierManagement'
+import PurchaseOrderManagement from './components/PurchaseOrderManagement'
 
 
 const units = ['each', 'kg', 'liter', 'pack', 'bottle']
@@ -893,6 +895,8 @@ async function handleDispositionSubmit(event) {
   deletingCategoryId={deletingCategoryId}
   handleDeleteCategory={handleDeleteCategory}
 />
+<SupplierManagement />
+<PurchaseOrderManagement />
         <section className="product-list-section">
           <div className="section-heading">
             <h2>Product catalog</h2>
