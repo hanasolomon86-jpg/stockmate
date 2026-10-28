@@ -39,6 +39,83 @@ db.exec(`
   )
 `)
 
+// Store supplier details.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS suppliers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    contact_name TEXT,
+    phone TEXT,
+    email TEXT,
+    notes TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1
+      CHECK (is_active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+// Store purchase orders and their workflow status.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS purchase_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    supplier_id INTEGER NOT NULL
+      REFERENCES suppliers(id) ON DELETE RESTRICT,
+    status TEXT NOT NULL DEFAULT 'draft'
+      CHECK (
+        status IN (
+          'draft',
+          'ordered',
+          'partially_received',
+          'received',
+          'cancelled'
+        )
+      ),
+    notes TEXT,
+    ordered_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+// Store products and quantities belonging to each purchase order.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS purchase_order_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    purchase_order_id INTEGER NOT NULL
+      REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL
+      REFERENCES products(id) ON DELETE RESTRICT,
+    ordered_quantity REAL NOT NULL
+      CHECK (ordered_quantity > 0),
+    received_quantity REAL NOT NULL DEFAULT 0
+      CHECK (
+        received_quantity >= 0
+        AND received_quantity <= ordered_quantity
+      ),
+    unit_cost REAL NOT NULL
+      CHECK (unit_cost >= 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (purchase_order_id, product_id)
+  )
+`)
+
+// Indexes for supplier and purchase order lookups.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier_status
+  ON purchase_orders(supplier_id, status)
+`)
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_purchase_order_items_order
+  ON purchase_order_items(purchase_order_id)
+`)
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_purchase_order_items_product
+  ON purchase_order_items(product_id)
+`)
+
 // Store received inventory in separate batches.
 db.exec(`
   CREATE TABLE IF NOT EXISTS inventory_batches (
@@ -169,29 +246,6 @@ db.exec(`
   ON inventory_dispositions(product_id, created_at DESC)
 `)
 
-// Backfill receipt history for batches created before movement logging.
-db.exec(`
-  INSERT INTO inventory_movements (
-    product_id,
-    batch_id,
-    movement_type,
-    quantity_change,
-    created_at
-  )
-  SELECT
-    b.product_id,
-    b.id,
-    'received',
-    b.quantity_received,
-    b.received_at
-  FROM inventory_batches AS b
-  WHERE NOT EXISTS (
-    SELECT 1
-    FROM inventory_movements AS m
-    WHERE m.batch_id = b.id
-      AND m.movement_type = 'received'
-  )
-`)
 
 // Backfill receipt history for batches created before movement logging.
 db.exec(`

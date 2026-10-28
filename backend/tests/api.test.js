@@ -599,6 +599,417 @@ test('StockMate API', async (t) => {
         },
     )
 
+    await t.test(
+        'suppliers can be created, retrieved, and updated',
+        async () => {
+            const supplierName = `Test Supplier ${process.pid}`
+
+            const supplierData = {
+                name: supplierName,
+                contactName: 'Test Contact',
+                phone: '0501234567',
+                email: 'supplier@example.com',
+                notes: 'Test supplier notes',
+            }
+
+            // Create a supplier.
+            const createResponse = await request(app)
+                .post('/api/suppliers')
+                .send(supplierData)
+                .expect(201)
+
+            const supplierId = createResponse.body.id
+
+            assert.ok(supplierId)
+            assert.equal(createResponse.body.name, supplierName)
+            assert.equal(
+                createResponse.body.contactName,
+                supplierData.contactName,
+            )
+            assert.equal(createResponse.body.email, supplierData.email)
+            assert.equal(createResponse.body.isActive, 1)
+
+            // Retrieve suppliers and confirm the supplier exists.
+            const listResponse = await request(app)
+                .get('/api/suppliers')
+                .expect(200)
+
+            assert.ok(
+                listResponse.body.some(
+                    (supplier) => supplier.id === supplierId,
+                ),
+            )
+
+            // Reject a duplicate supplier name.
+            await request(app)
+                .post('/api/suppliers')
+                .send({
+                    ...supplierData,
+                    name: supplierName.toUpperCase(),
+                })
+                .expect(409)
+
+            // Reject invalid email addresses.
+            const invalidEmailResponse = await request(app)
+                .post('/api/suppliers')
+                .send({
+                    name: `Invalid Email Supplier ${process.pid}`,
+                    email: 'not-an-email',
+                })
+                .expect(400)
+
+            assert.match(invalidEmailResponse.body.error, /email/i)
+
+            // Update the supplier and mark it inactive.
+            const updateResponse = await request(app)
+                .put(`/api/suppliers/${supplierId}`)
+                .send({
+                    name: supplierName,
+                    contactName: 'Updated Contact',
+                    phone: '0507654321',
+                    email: 'updated@example.com',
+                    notes: 'Updated notes',
+                    isActive: false,
+                })
+                .expect(200)
+
+            assert.equal(
+                updateResponse.body.contactName,
+                'Updated Contact',
+            )
+            assert.equal(
+                updateResponse.body.phone,
+                '0507654321',
+            )
+            assert.equal(
+                updateResponse.body.email,
+                'updated@example.com',
+            )
+            assert.equal(updateResponse.body.isActive, 0)
+
+            // Invalid supplier IDs must be rejected.
+            await request(app)
+                .put('/api/suppliers/not-a-number')
+                .send({
+                    name: supplierName,
+                })
+                .expect(400)
+
+            // Unknown supplier IDs must return 404.
+            await request(app)
+                .put('/api/suppliers/999999')
+                .send({
+                    name: supplierName,
+                })
+                .expect(404)
+        },
+    )
+
+    await t.test(
+        'purchase orders can be created and retrieved',
+        async () => {
+            // Create a supplier for the purchase order.
+            const supplierResponse = await request(app)
+                .post('/api/suppliers')
+                .send({
+                    name: `Purchase Order Supplier ${process.pid}`,
+                    contactName: 'Test Contact',
+                    email: 'purchase@example.com',
+                })
+                .expect(201)
+
+            const supplierId = supplierResponse.body.id
+
+            // Create a product to order.
+            const productResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Product for Purchase Order Test',
+                    category: 'Pantry',
+                    unit: 'each',
+                    salePrice: 12,
+                    minStock: 2,
+                    targetStock: 10,
+                    barcode: `TEST-PO-${process.pid}`,
+                })
+                .expect(201)
+
+            const productId = productResponse.body.id
+
+            // Create a purchase order with one item.
+            const orderResponse = await request(app)
+                .post('/api/purchase-orders')
+                .send({
+                    supplierId,
+                    notes: 'Test purchase order',
+                    items: [
+                        {
+                            productId,
+                            quantity: 10,
+                            unitCost: 7.5,
+                        },
+                    ],
+                })
+                .expect(201)
+
+            const orderId = orderResponse.body.id
+
+            assert.ok(orderId)
+            assert.equal(orderResponse.body.supplierId, supplierId)
+            assert.equal(
+                orderResponse.body.supplierName,
+                supplierResponse.body.name,
+            )
+            assert.equal(orderResponse.body.status, 'draft')
+            assert.equal(orderResponse.body.notes, 'Test purchase order')
+
+            assert.equal(orderResponse.body.items.length, 1)
+
+            assert.equal(
+                orderResponse.body.items[0].productId,
+                productId,
+            )
+            assert.equal(
+                orderResponse.body.items[0].productName,
+                productResponse.body.name,
+            )
+            assert.equal(
+                orderResponse.body.items[0].orderedQuantity,
+                10,
+            )
+            assert.equal(
+                orderResponse.body.items[0].receivedQuantity,
+                0,
+            )
+            assert.equal(
+                orderResponse.body.items[0].remainingQuantity,
+                10,
+            )
+            assert.equal(orderResponse.body.items[0].unitCost, 7.5)
+
+            // Retrieve the individual purchase order.
+            const detailResponse = await request(app)
+                .get(`/api/purchase-orders/${orderId}`)
+                .expect(200)
+
+            assert.equal(detailResponse.body.id, orderId)
+            assert.equal(detailResponse.body.items.length, 1)
+
+            // Confirm the order appears in the list.
+            const listResponse = await request(app)
+                .get('/api/purchase-orders')
+                .expect(200)
+
+            assert.ok(
+                listResponse.body.some(
+                    (order) => order.id === orderId,
+                ),
+            )
+
+            // Reject an order without items.
+            await request(app)
+                .post('/api/purchase-orders')
+                .send({
+                    supplierId,
+                    items: [],
+                })
+                .expect(400)
+
+            // Reject an invalid order ID.
+            await request(app)
+                .get('/api/purchase-orders/not-a-number')
+                .expect(400)
+
+            // Reject an unknown order ID.
+            await request(app)
+                .get('/api/purchase-orders/999999')
+                .expect(404)
+        },
+    )
+
+    await t.test(
+        'purchase order stock can be received partially and fully',
+        async () => {
+            // Create a supplier.
+            const supplierResponse = await request(app)
+                .post('/api/suppliers')
+                .send({
+                    name: `Receiving Test Supplier ${process.pid}`,
+                    email: 'receiving@example.com',
+                })
+                .expect(201)
+
+            const supplierId = supplierResponse.body.id
+
+            // Create a product.
+            const productResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Product for Receiving Test',
+                    category: 'Pantry',
+                    unit: 'each',
+                    salePrice: 15,
+                    minStock: 2,
+                    targetStock: 10,
+                    barcode: `TEST-RECEIVING-${process.pid}`,
+                })
+                .expect(201)
+
+            const productId = productResponse.body.id
+
+            // Create a purchase order for 10 units.
+            const createOrderResponse = await request(app)
+                .post('/api/purchase-orders')
+                .send({
+                    supplierId,
+                    items: [
+                        {
+                            productId,
+                            quantity: 10,
+                            unitCost: 8,
+                        },
+                    ],
+                })
+                .expect(201)
+
+            const orderId = createOrderResponse.body.id
+            const itemId = createOrderResponse.body.items[0].id
+
+            assert.equal(createOrderResponse.body.status, 'draft')
+
+            // A draft order cannot receive stock.
+            await request(app)
+                .post(`/api/purchase-orders/${orderId}/receive`)
+                .send({
+                    items: [{ itemId, quantity: 2 }],
+                })
+                .expect(409)
+
+            // Mark the purchase order as ordered.
+            const orderedResponse = await request(app)
+                .patch(`/api/purchase-orders/${orderId}/status`)
+                .send({ status: 'ordered' })
+                .expect(200)
+
+            assert.equal(orderedResponse.body.status, 'ordered')
+
+            // Receive 4 units first.
+            const partialResponse = await request(app)
+                .post(`/api/purchase-orders/${orderId}/receive`)
+                .send({
+                    items: [
+                        {
+                            itemId,
+                            quantity: 4,
+                            expirationDate: '2026-11-12',
+                        },
+                    ],
+                })
+                .expect(200)
+
+            assert.equal(
+                partialResponse.body.status,
+                'partially_received',
+            )
+            assert.equal(
+                partialResponse.body.items[0].receivedQuantity,
+                4,
+            )
+            assert.equal(
+                partialResponse.body.items[0].remainingQuantity,
+                6,
+            )
+            assert.equal(
+                partialResponse.body.receivedItems[0].quantity,
+                4,
+            )
+
+            // Reject a receipt exceeding the remaining 6 units.
+            const excessiveResponse = await request(app)
+                .post(`/api/purchase-orders/${orderId}/receive`)
+                .send({
+                    items: [{ itemId, quantity: 7 }],
+                })
+                .expect(409)
+
+            assert.equal(
+                excessiveResponse.body.remainingQuantity,
+                6,
+            )
+
+            // The failed receipt must not change the received quantity or stock.
+            const afterExcessResponse = await request(app)
+                .get(`/api/products/${productId}/inventory-batches`)
+                .expect(200)
+
+            assert.equal(afterExcessResponse.body.length, 1)
+            assert.equal(
+                afterExcessResponse.body[0].quantityRemaining,
+                4,
+            )
+
+            // Receive the remaining 6 units.
+            const completeResponse = await request(app)
+                .post(`/api/purchase-orders/${orderId}/receive`)
+                .send({
+                    items: [
+                        {
+                            itemId,
+                            quantity: 6,
+                            expirationDate: '2026-11-18',
+                        },
+                    ],
+                })
+                .expect(200)
+
+            assert.equal(completeResponse.body.status, 'received')
+            assert.equal(
+                completeResponse.body.items[0].receivedQuantity,
+                10,
+            )
+            assert.equal(
+                completeResponse.body.items[0].remainingQuantity,
+                0,
+            )
+
+            // The total available stock should now be 10.
+            const productsResponse = await request(app)
+                .get('/api/products')
+                .expect(200)
+
+            const updatedProduct = productsResponse.body.find(
+                (product) => product.id === productId,
+            )
+
+            assert.equal(updatedProduct.currentStock, 10)
+
+            // Check that each successful receipt was recorded in history.
+            const movementsResponse = await request(app)
+                .get(`/api/products/${productId}/inventory-movements`)
+                .expect(200)
+
+            const receivedMovements = movementsResponse.body.filter(
+                (movement) => movement.movementType === 'received',
+            )
+
+            assert.equal(receivedMovements.length, 2)
+
+            assert.equal(
+                receivedMovements.reduce(
+                    (total, movement) => total + movement.quantityChange,
+                    0,
+                ),
+                10,
+            )
+
+            // Once fully received, the order cannot be cancelled.
+            await request(app)
+                .patch(`/api/purchase-orders/${orderId}/status`)
+                .send({ status: 'cancelled' })
+                .expect(409)
+        },
+    )
+
     await t.test('duplicate category names are rejected', async () => {
         const categoryName = `Test Category ${process.pid}`
 
