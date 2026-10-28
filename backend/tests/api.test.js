@@ -427,6 +427,178 @@ test('StockMate API', async (t) => {
         assert.equal(batchesResponse.body.length, 0)
     })
 
+    await t.test(
+        'expired and damaged inventory is recorded correctly',
+        async () => {
+            const productResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Product for Disposition Test',
+                    category: 'Dairy',
+                    unit: 'liter',
+                    salePrice: 6,
+                    minStock: 1,
+                    targetStock: 5,
+                    barcode: `TEST-DISPOSITION-${process.pid}`,
+                })
+                .expect(201)
+
+            const productId = productResponse.body.id
+
+            await request(app)
+                .post(`/api/products/${productId}/inventory-batches`)
+                .send({
+                    quantity: 5,
+                    expirationDate: '2026-11-08',
+                })
+                .expect(201)
+
+            const batchesResponse = await request(app)
+                .get(`/api/products/${productId}/inventory-batches`)
+                .expect(200)
+
+            const batchId = batchesResponse.body[0].id
+
+            // Record expired products transferred to disposal.
+            const expiredResponse = await request(app)
+                .post(
+                    `/api/products/${productId}/inventory-batches/${batchId}/dispositions`,
+                )
+                .send({
+                    quantity: 2,
+                    reason: 'expired',
+                    destination: 'disposal',
+                })
+                .expect(201)
+
+            assert.equal(
+                expiredResponse.body.disposition.reason,
+                'expired',
+            )
+            assert.equal(
+                expiredResponse.body.disposition.destination,
+                'disposal',
+            )
+            assert.equal(
+                expiredResponse.body.disposition.quantity,
+                2,
+            )
+            assert.equal(expiredResponse.body.currentStock, 3)
+
+            // Record damaged products transferred to returns.
+            const damagedResponse = await request(app)
+                .post(
+                    `/api/products/${productId}/inventory-batches/${batchId}/dispositions`,
+                )
+                .send({
+                    quantity: 1,
+                    reason: 'damaged',
+                    destination: 'returns',
+                })
+                .expect(201)
+
+            assert.equal(
+                damagedResponse.body.disposition.reason,
+                'damaged',
+            )
+            assert.equal(
+                damagedResponse.body.disposition.destination,
+                'returns',
+            )
+            assert.equal(damagedResponse.body.currentStock, 2)
+
+            // Reject a disposition larger than the remaining stock.
+            const excessiveResponse = await request(app)
+                .post(
+                    `/api/products/${productId}/inventory-batches/${batchId}/dispositions`,
+                )
+                .send({
+                    quantity: 3,
+                    reason: 'expired',
+                    destination: 'disposal',
+                })
+                .expect(409)
+
+            assert.equal(excessiveResponse.body.availableQuantity, 2)
+
+            // Verify that the disposition records were preserved.
+            const dispositionsResponse = await request(app)
+                .get(`/api/products/${productId}/inventory-dispositions`)
+                .expect(200)
+
+            assert.equal(dispositionsResponse.body.length, 2)
+
+            assert.ok(
+                dispositionsResponse.body.some(
+                    (item) =>
+                        item.reason === 'expired' &&
+                        item.destination === 'disposal' &&
+                        item.quantity === 2,
+                ),
+            )
+
+            assert.ok(
+                dispositionsResponse.body.some(
+                    (item) =>
+                        item.reason === 'damaged' &&
+                        item.destination === 'returns' &&
+                        item.quantity === 1,
+                ),
+            )
+
+            // Verify the stock movement history.
+            const movementsResponse = await request(app)
+                .get(`/api/products/${productId}/inventory-movements`)
+                .expect(200)
+
+            assert.deepEqual(
+                movementsResponse.body
+                    .map((movement) => movement.movementType)
+                    .sort(),
+                ['damaged', 'expired', 'received'],
+            )
+
+            assert.ok(
+                movementsResponse.body.some(
+                    (movement) =>
+                        movement.movementType === 'expired' &&
+                        movement.quantityChange === -2,
+                ),
+            )
+
+            assert.ok(
+                movementsResponse.body.some(
+                    (movement) =>
+                        movement.movementType === 'damaged' &&
+                        movement.quantityChange === -1,
+                ),
+            )
+
+            // Confirm that the available stock is still correct.
+            const productsResponse = await request(app)
+                .get('/api/products')
+                .expect(200)
+
+            const updatedProduct = productsResponse.body.find(
+                (product) => product.id === productId,
+            )
+
+            assert.equal(updatedProduct.currentStock, 2)
+
+            // Invalid disposition reasons must be rejected.
+            await request(app)
+                .post(
+                    `/api/products/${productId}/inventory-batches/${batchId}/dispositions`,
+                )
+                .send({
+                    quantity: 1,
+                    reason: 'unknown',
+                    destination: 'disposal',
+                })
+                .expect(400)
+        },
+    )
+
     await t.test('duplicate category names are rejected', async () => {
         const categoryName = `Test Category ${process.pid}`
 

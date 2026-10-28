@@ -288,6 +288,246 @@ app.get('/api/products/:id/inventory-movements', (req, res) => {
     }
 })
 
+// Record expired or damaged inventory transferred out of available stock.
+app.post(
+    '/api/products/:id/inventory-batches/:batchId/dispositions',
+    (req, res) => {
+        const productId = Number(req.params.id)
+        const batchId = Number(req.params.batchId)
+        const { quantity, reason, destination } = req.body ?? {}
+
+        if (!Number.isSafeInteger(productId) || productId <= 0) {
+            return res.status(400).json({
+                error: 'Invalid product ID.',
+            })
+        }
+
+        if (!Number.isSafeInteger(batchId) || batchId <= 0) {
+            return res.status(400).json({
+                error: 'Invalid inventory batch ID.',
+            })
+        }
+
+        if (
+            typeof quantity !== 'number' ||
+            !Number.isFinite(quantity) ||
+            quantity <= 0
+        ) {
+            return res.status(400).json({
+                error: 'Disposition quantity must be a positive number.',
+            })
+        }
+
+        if (!['expired', 'damaged'].includes(reason)) {
+            return res.status(400).json({
+                error: 'Reason must be expired or damaged.',
+            })
+        }
+
+        if (!['returns', 'disposal'].includes(destination)) {
+            return res.status(400).json({
+                error: 'Destination must be returns or disposal.',
+            })
+        }
+
+        try {
+            const product = db
+                .prepare('SELECT id FROM products WHERE id = ?')
+                .get(productId)
+
+            if (!product) {
+                return res.status(404).json({
+                    error: 'Product not found.',
+                })
+            }
+
+            const result = db.transaction(() => {
+                const batch = db
+                    .prepare(`
+                        SELECT
+                            id,
+                            quantity_remaining AS quantityRemaining
+                        FROM inventory_batches
+                        WHERE id = ? AND product_id = ?
+                    `)
+                    .get(batchId, productId)
+
+                if (!batch) {
+                    return { batchNotFound: true }
+                }
+
+                if (quantity > batch.quantityRemaining) {
+                    return {
+                        insufficientStock: true,
+                        availableQuantity: batch.quantityRemaining,
+                    }
+                }
+
+                const updateResult = db
+                    .prepare(`
+                        UPDATE inventory_batches
+                        SET quantity_remaining = quantity_remaining - ?
+                        WHERE id = ?
+                          AND quantity_remaining >= ?
+                    `)
+                    .run(quantity, batchId, quantity)
+
+                if (updateResult.changes !== 1) {
+                    return {
+                        insufficientStock: true,
+                        availableQuantity: batch.quantityRemaining,
+                    }
+                }
+
+                const dispositionResult = db
+                    .prepare(`
+                        INSERT INTO inventory_dispositions (
+                            product_id,
+                            batch_id,
+                            reason,
+                            destination,
+                            quantity
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                    `)
+                    .run(
+                        productId,
+                        batchId,
+                        reason,
+                        destination,
+                        quantity,
+                    )
+
+                db.prepare(`
+                    INSERT INTO inventory_movements (
+                        product_id,
+                        batch_id,
+                        movement_type,
+                        quantity_change
+                    )
+                    VALUES (?, ?, ?, ?)
+                `).run(productId, batchId, reason, -quantity)
+
+                const disposition = db
+                    .prepare(`
+                        SELECT
+                            id,
+                            product_id AS productId,
+                            batch_id AS batchId,
+                            reason,
+                            destination,
+                            quantity,
+                            created_at AS createdAt
+                        FROM inventory_dispositions
+                        WHERE id = ?
+                    `)
+                    .get(dispositionResult.lastInsertRowid)
+
+                const stock = db
+                    .prepare(`
+                        SELECT COALESCE(
+                            SUM(quantity_remaining),
+                            0
+                        ) AS currentStock
+                        FROM inventory_batches
+                        WHERE product_id = ?
+                    `)
+                    .get(productId)
+
+                return {
+                    disposition,
+                    currentStock: stock.currentStock,
+                }
+            })()
+
+            if (result.batchNotFound) {
+                return res.status(404).json({
+                    error: 'Inventory batch not found for this product.',
+                })
+            }
+
+            if (result.insufficientStock) {
+                return res.status(409).json({
+                    error: 'Disposition quantity exceeds available quantity in this batch.',
+                    availableQuantity: result.availableQuantity,
+                })
+            }
+
+            logEvent('info', 'inventory_disposition_recorded', {
+                productId,
+                batchId,
+                reason,
+                destination,
+                quantity,
+            })
+
+            return res.status(201).json(result)
+        } catch (error) {
+            logEvent('error', 'inventory_disposition_recording_failed', {
+                errorName: error.name,
+                errorCode: error.code || 'UNEXPECTED_ERROR',
+            })
+
+            return res.status(500).json({
+                error: 'Failed to record inventory disposition.',
+            })
+        }
+    },
+)
+
+// Retrieve expired and damaged inventory records for a product.
+app.get('/api/products/:id/inventory-dispositions', (req, res) => {
+    const productId = Number(req.params.id)
+
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare('SELECT id FROM products WHERE id = ?')
+            .get(productId)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const dispositions = db
+            .prepare(`
+                SELECT
+                    d.id,
+                    d.product_id AS productId,
+                    d.batch_id AS batchId,
+                    d.reason,
+                    d.destination,
+                    d.quantity,
+                    d.created_at AS createdAt,
+                    b.expiration_date AS expirationDate
+                FROM inventory_dispositions AS d
+                JOIN inventory_batches AS b
+                    ON b.id = d.batch_id
+                WHERE d.product_id = ?
+                ORDER BY d.created_at DESC, d.id DESC
+            `)
+            .all(productId)
+
+        return res.status(200).json(dispositions)
+    } catch (error) {
+        logEvent('error', 'inventory_dispositions_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve inventory dispositions.',
+        })
+    }
+})
+
 // Record a sale and deduct stock from the earliest-expiring batches first.
 app.post('/api/products/:id/sales', (req, res) => {
     const productId = Number(req.params.id)
