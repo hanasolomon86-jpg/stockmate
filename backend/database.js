@@ -63,7 +63,7 @@ db.exec(`
   ON inventory_batches(product_id)
 `)
 
-// Record inventory movements for future inventory history.
+// Record inventory movements for inventory history.
 db.exec(`
   CREATE TABLE IF NOT EXISTS inventory_movements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,18 +72,126 @@ db.exec(`
     batch_id INTEGER
       REFERENCES inventory_batches(id) ON DELETE RESTRICT,
     movement_type TEXT NOT NULL
-      CHECK (movement_type IN ('received', 'sale')),
+      CHECK (
+        movement_type IN ('received', 'sale', 'expired', 'damaged')
+      ),
     quantity_change REAL NOT NULL
       CHECK (quantity_change != 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )
 `)
 
+// Migrate existing databases to support expired and damaged movements.
+const movementSchema =
+  db.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'inventory_movements'
+  `).get()?.sql ?? ''
+
+if (
+  !movementSchema.includes("'expired'") ||
+  !movementSchema.includes("'damaged'")
+) {
+  const migrateMovementTypes = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE inventory_movements_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL
+          REFERENCES products(id) ON DELETE RESTRICT,
+        batch_id INTEGER
+          REFERENCES inventory_batches(id) ON DELETE RESTRICT,
+        movement_type TEXT NOT NULL
+          CHECK (
+            movement_type IN ('received', 'sale', 'expired', 'damaged')
+          ),
+        quantity_change REAL NOT NULL
+          CHECK (quantity_change != 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      INSERT INTO inventory_movements_new (
+        id,
+        product_id,
+        batch_id,
+        movement_type,
+        quantity_change,
+        created_at
+      )
+      SELECT
+        id,
+        product_id,
+        batch_id,
+        movement_type,
+        quantity_change,
+        created_at
+      FROM inventory_movements
+    `)
+
+    db.exec('DROP TABLE inventory_movements')
+    db.exec(`
+      ALTER TABLE inventory_movements_new
+      RENAME TO inventory_movements
+    `)
+  })
+
+  migrateMovementTypes()
+}
+
+// Index inventory history by product and date.
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_created
   ON inventory_movements(product_id, created_at DESC)
 `)
 
+// Record expired or damaged inventory transferred out of available stock.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_dispositions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL
+      REFERENCES products(id) ON DELETE RESTRICT,
+    batch_id INTEGER NOT NULL
+      REFERENCES inventory_batches(id) ON DELETE RESTRICT,
+    reason TEXT NOT NULL
+      CHECK (reason IN ('expired', 'damaged')),
+    destination TEXT NOT NULL
+      CHECK (destination IN ('returns', 'disposal')),
+    quantity REAL NOT NULL
+      CHECK (quantity > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_inventory_dispositions_product_created
+  ON inventory_dispositions(product_id, created_at DESC)
+`)
+
+// Backfill receipt history for batches created before movement logging.
+db.exec(`
+  INSERT INTO inventory_movements (
+    product_id,
+    batch_id,
+    movement_type,
+    quantity_change,
+    created_at
+  )
+  SELECT
+    b.product_id,
+    b.id,
+    'received',
+    b.quantity_received,
+    b.received_at
+  FROM inventory_batches AS b
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM inventory_movements AS m
+    WHERE m.batch_id = b.id
+      AND m.movement_type = 'received'
+  )
+`)
 
 // Backfill receipt history for batches created before movement logging.
 db.exec(`

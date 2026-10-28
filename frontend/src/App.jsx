@@ -21,6 +21,17 @@ function App() {
   const [inventoryProduct, setInventoryProduct] = useState(null)
 const [inventoryBatches, setInventoryBatches] = useState([])
 const [inventoryMovements, setInventoryMovements] = useState([])
+const [inventoryDispositions, setInventoryDispositions] = useState([])
+const [isLoadingDispositions, setIsLoadingDispositions] = useState(false)
+const [dispositionsError, setDispositionsError] = useState('')
+const [isSavingDisposition, setIsSavingDisposition] = useState(false)
+
+const [dispositionForm, setDispositionForm] = useState({
+  batchId: '',
+  quantity: '',
+  reason: 'expired',
+  destination: 'disposal',
+})
 const [isLoadingMovements, setIsLoadingMovements] = useState(false)
 const [movementsError, setMovementsError] = useState('')
 const [inventoryForm, setInventoryForm] = useState({
@@ -470,21 +481,58 @@ async function loadInventoryMovements(productId) {
   }
 }
 
+async function loadInventoryDispositions(productId) {
+  setIsLoadingDispositions(true)
+  setDispositionsError('')
+
+  try {
+    const response = await fetch(
+      `/api/products/${productId}/inventory-dispositions`,
+    )
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || 'Failed to load inventory dispositions.',
+      )
+    }
+
+    setInventoryDispositions(result)
+  } catch (error) {
+    console.error('Failed to load inventory dispositions:', error)
+    setDispositionsError('Could not load expired and damaged stock records.')
+  } finally {
+    setIsLoadingDispositions(false)
+  }
+}
+
 async function openInventoryModal(product) {
   setInventoryProduct(product)
   setInventoryBatches([])
   setInventoryMovements([])
-setMovementsError('')
+  setInventoryDispositions([])
+  setMovementsError('')
+  setDispositionsError('')
+
   setInventoryForm({
     quantity: '',
     expirationDate: '',
   })
+
+  setDispositionForm({
+    batchId: '',
+    quantity: '',
+    reason: 'expired',
+    destination: 'disposal',
+  })
+
   setInventoryError('')
 
   await Promise.all([
-  loadInventoryBatches(product.id),
-  loadInventoryMovements(product.id),
-])
+    loadInventoryBatches(product.id),
+    loadInventoryMovements(product.id),
+    loadInventoryDispositions(product.id),
+  ])
 }
 
 async function handleReceiveInventory(event) {
@@ -536,6 +584,7 @@ async function handleReceiveInventory(event) {
 
 await loadInventoryBatches(inventoryProduct.id)
 await loadInventoryMovements(inventoryProduct.id)
+await loadInventoryDispositions(inventoryProduct.id)
 
 // Refresh the product catalog with current inventory totals.
 try {
@@ -564,6 +613,86 @@ try {
     )
   } finally {
     setIsReceivingInventory(false)
+  }
+}
+
+async function handleDispositionSubmit(event) {
+  event.preventDefault()
+
+  if (!inventoryProduct) {
+    return
+  }
+
+  const quantity = Number(dispositionForm.quantity)
+
+  if (!dispositionForm.batchId) {
+    setDispositionsError('Please select an inventory batch.')
+    return
+  }
+
+  if (
+    dispositionForm.quantity.trim() === '' ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    setDispositionsError('Quantity must be a positive number.')
+    return
+  }
+
+  setDispositionsError('')
+  setIsSavingDisposition(true)
+
+  try {
+    const response = await fetch(
+      `/api/products/${inventoryProduct.id}/inventory-batches/${dispositionForm.batchId}/dispositions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          quantity,
+          reason: dispositionForm.reason,
+          destination: dispositionForm.destination,
+        }),
+      },
+    )
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || 'Failed to record inventory disposition.',
+      )
+    }
+
+    setDispositionForm({
+      batchId: '',
+      quantity: '',
+      reason: 'expired',
+      destination: 'disposal',
+    })
+
+    await Promise.all([
+      loadInventoryBatches(inventoryProduct.id),
+      loadInventoryMovements(inventoryProduct.id),
+      loadInventoryDispositions(inventoryProduct.id),
+    ])
+
+    const productsResponse = await fetch('/api/products')
+
+    if (!productsResponse.ok) {
+      throw new Error('Disposition was saved, but products could not refresh.')
+    }
+
+    setProducts(await productsResponse.json())
+  } catch (error) {
+    console.error('Failed to record inventory disposition:', error)
+    setDispositionsError(
+      error.message || 'Could not record inventory disposition.',
+    )
+  } finally {
+    setIsSavingDisposition(false)
   }
 }
 
@@ -992,9 +1121,161 @@ try {
               ))}
             </tbody>
           </table>
+                </div>
+      )}
+
+      <div className="section-heading">
+        <h3>Expired and damaged stock</h3>
+      </div>
+
+      <form onSubmit={handleDispositionSubmit}>
+        <div className="form-grid">
+          <div className="form-field">
+            <label htmlFor="disposition-batch">Inventory batch *</label>
+            <select
+              id="disposition-batch"
+              required
+              value={dispositionForm.batchId}
+              onChange={(event) =>
+                setDispositionForm((previous) => ({
+                  ...previous,
+                  batchId: event.target.value,
+                }))
+              }
+            >
+              <option value="">Select a batch</option>
+              {inventoryBatches
+                .filter((batch) => batch.quantityRemaining > 0)
+                .map((batch) => (
+                  <option key={batch.id} value={batch.id}>
+                    Expiration: {batch.expirationDate || 'Not specified'} —
+                    Available: {batch.quantityRemaining}
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="disposition-quantity">Quantity *</label>
+            <input
+              id="disposition-quantity"
+              type="number"
+              min="0.001"
+              step="any"
+              required
+              value={dispositionForm.quantity}
+              onChange={(event) =>
+                setDispositionForm((previous) => ({
+                  ...previous,
+                  quantity: event.target.value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="disposition-reason">Reason *</label>
+            <select
+              id="disposition-reason"
+              value={dispositionForm.reason}
+              onChange={(event) =>
+                setDispositionForm((previous) => ({
+                  ...previous,
+                  reason: event.target.value,
+                }))
+              }
+            >
+              <option value="expired">Expired</option>
+              <option value="damaged">Damaged</option>
+            </select>
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="disposition-destination">Destination *</label>
+            <select
+              id="disposition-destination"
+              value={dispositionForm.destination}
+              onChange={(event) =>
+                setDispositionForm((previous) => ({
+                  ...previous,
+                  destination: event.target.value,
+                }))
+              }
+            >
+              <option value="returns">Returns</option>
+              <option value="disposal">Disposal</option>
+            </select>
+          </div>
+        </div>
+
+        {dispositionsError && (
+          <p className="form-error" role="alert">
+            {dispositionsError}
+          </p>
+        )}
+
+        <div className="form-actions">
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={
+              isSavingDisposition ||
+              !inventoryBatches.some(
+                (batch) => batch.quantityRemaining > 0,
+              )
+            }
+          >
+            {isSavingDisposition ? 'Saving...' : 'Record transfer'}
+          </button>
+        </div>
+      </form>
+
+      <div className="section-heading">
+        <h3>Transfer records</h3>
+      </div>
+
+      {isLoadingDispositions ? (
+        <p className="empty-state">Loading transfer records...</p>
+      ) : inventoryDispositions.length === 0 ? (
+        <p className="empty-state">
+          No expired or damaged stock transfers recorded yet.
+        </p>
+      ) : (
+        <div className="table-wrapper">
+          <table className="product-table">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Reason</th>
+                <th scope="col">Destination</th>
+                <th scope="col">Quantity</th>
+                <th scope="col">Expiration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryDispositions.map((disposition) => (
+                <tr key={disposition.id}>
+                  <td>{disposition.createdAt}</td>
+                  <td>
+                    {disposition.reason === 'expired'
+                      ? 'Expired'
+                      : 'Damaged'}
+                  </td>
+                  <td>
+                    {disposition.destination === 'returns'
+                      ? 'Returns'
+                      : 'Disposal'}
+                  </td>
+                  <td>{disposition.quantity}</td>
+                  <td>{disposition.expirationDate || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-            <div className="section-heading">
+
+      <div className="section-heading">
         <h3>Inventory history</h3>
       </div>
 
@@ -1027,8 +1308,12 @@ try {
                   <td>{movement.createdAt}</td>
                   <td>
                     {movement.movementType === 'received'
-                      ? 'Stock received'
-                      : 'Sale'}
+  ? 'Stock received'
+  : movement.movementType === 'sale'
+    ? 'Sale'
+    : movement.movementType === 'expired'
+      ? 'Expired stock'
+      : 'Damaged stock'}
                   </td>
                   <td>
                     {movement.quantityChange > 0 ? '+' : ''}
