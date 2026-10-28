@@ -284,6 +284,87 @@ test('StockMate API', async (t) => {
         )
     })
 
+    await t.test('sales reduce inventory and reject insufficient stock', async () => {
+        const productResponse = await request(app)
+            .post('/api/products')
+            .send({
+                name: 'Milk for Sales Test',
+                category: 'Dairy',
+                unit: 'liter',
+                salePrice: 6,
+                minStock: 1,
+                targetStock: 10,
+                barcode: `TEST-SALES-${process.pid}`,
+            })
+            .expect(201)
+
+        const productId = productResponse.body.id
+
+        await request(app)
+            .post(`/api/products/${productId}/inventory-batches`)
+            .send({
+                quantity: 5,
+                expirationDate: '2026-11-08',
+            })
+            .expect(201)
+
+        await request(app)
+            .post(`/api/products/${productId}/inventory-batches`)
+            .send({
+                quantity: 4,
+                expirationDate: '2026-11-03',
+            })
+            .expect(201)
+
+        const saleResponse = await request(app)
+            .post(`/api/products/${productId}/sales`)
+            .send({ quantity: 6 })
+            .expect(201)
+
+        assert.equal(saleResponse.body.quantitySold, 6)
+        assert.equal(saleResponse.body.currentStock, 3)
+
+        const batchesResponse = await request(app)
+            .get(`/api/products/${productId}/inventory-batches`)
+            .expect(200)
+
+        assert.equal(batchesResponse.body[0].expirationDate, '2026-11-03')
+        assert.equal(batchesResponse.body[0].quantityRemaining, 0)
+        assert.equal(batchesResponse.body[1].quantityRemaining, 3)
+
+        const excessiveSale = await request(app)
+            .post(`/api/products/${productId}/sales`)
+            .send({ quantity: 4 })
+            .expect(409)
+
+        assert.equal(excessiveSale.body.currentStock, 3)
+
+        await request(app)
+            .post(`/api/products/${productId}/sales`)
+            .send({ quantity: 0 })
+            .expect(400)
+
+        const movements = db
+            .prepare(`
+                SELECT movement_type AS movementType,
+                       quantity_change AS quantityChange
+                FROM inventory_movements
+                WHERE product_id = ?
+                ORDER BY id ASC
+            `)
+            .all(productId)
+
+        assert.deepEqual(
+            movements.map((movement) => movement.movementType),
+            ['received', 'received', 'sale', 'sale'],
+        )
+
+        assert.deepEqual(
+            movements.map((movement) => movement.quantityChange),
+            [5, 4, -4, -2],
+        )
+    })
+
     await t.test('invalid inventory requests are rejected', async () => {
         const productResponse = await request(app)
             .post('/api/products')

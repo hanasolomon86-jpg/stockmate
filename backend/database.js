@@ -63,6 +63,27 @@ db.exec(`
   ON inventory_batches(product_id)
 `)
 
+// Record inventory movements for future inventory history.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_movements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL
+      REFERENCES products(id) ON DELETE RESTRICT,
+    batch_id INTEGER
+      REFERENCES inventory_batches(id) ON DELETE RESTRICT,
+    movement_type TEXT NOT NULL
+      CHECK (movement_type IN ('received', 'sale')),
+    quantity_change REAL NOT NULL
+      CHECK (quantity_change != 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_inventory_movements_product_created
+  ON inventory_movements(product_id, created_at DESC)
+`)
+
 // Insert the initial categories without duplicating existing ones.
 const defaultCategories = [
   'Produce',

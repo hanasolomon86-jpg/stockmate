@@ -123,37 +123,48 @@ app.post('/api/products/:id/inventory-batches', (req, res) => {
             })
         }
 
-        const result = db
-            .prepare(`
-                INSERT INTO inventory_batches (
-                    product_id,
-                    quantity_received,
-                    quantity_remaining,
-                    expiration_date
-                )
-                VALUES (?, ?, ?, ?)
-            `)
-            .run(
-                productId,
-                quantity,
-                quantity,
-                cleanExpirationDate,
+        const batch = db.transaction(() => {
+            const result = db
+                .prepare(`
+            INSERT INTO inventory_batches (
+                product_id,
+                quantity_received,
+                quantity_remaining,
+                expiration_date
             )
+            VALUES (?, ?, ?, ?)
+        `)
+                .run(
+                    productId,
+                    quantity,
+                    quantity,
+                    cleanExpirationDate,
+                )
 
-        const batch = db
-            .prepare(`
-                SELECT
-                    id,
-                    product_id AS productId,
-                    quantity_received AS quantityReceived,
-                    quantity_remaining AS quantityRemaining,
-                    expiration_date AS expirationDate,
-                    received_at AS receivedAt
-                FROM inventory_batches
-                WHERE id = ?
-            `)
-            .get(result.lastInsertRowid)
+            db.prepare(`
+        INSERT INTO inventory_movements (
+            product_id,
+            batch_id,
+            movement_type,
+            quantity_change
+        )
+        VALUES (?, ?, 'received', ?)
+    `).run(productId, result.lastInsertRowid, quantity)
 
+            return db
+                .prepare(`
+            SELECT
+                id,
+                product_id AS productId,
+                quantity_received AS quantityReceived,
+                quantity_remaining AS quantityRemaining,
+                expiration_date AS expirationDate,
+                received_at AS receivedAt
+            FROM inventory_batches
+            WHERE id = ?
+        `)
+                .get(result.lastInsertRowid)
+        })()
         logEvent('info', 'inventory_batch_received', {
             productId,
             batchId: batch.id,
@@ -221,6 +232,170 @@ app.get('/api/products/:id/inventory-batches', (req, res) => {
 
         return res.status(500).json({
             error: 'Failed to retrieve inventory batches.',
+        })
+    }
+})
+
+// Record a sale and deduct stock from the earliest-expiring batches first.
+app.post('/api/products/:id/sales', (req, res) => {
+    const productId = Number(req.params.id)
+    const { quantity } = req.body ?? {}
+
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    if (
+        typeof quantity !== 'number' ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0
+    ) {
+        return res.status(400).json({
+            error: 'Sale quantity must be a positive number.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare('SELECT id FROM products WHERE id = ?')
+            .get(productId)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const saleResult = db.transaction(() => {
+            const batches = db
+                .prepare(`
+                    SELECT id, quantity_remaining AS quantityRemaining
+                    FROM inventory_batches
+                    WHERE product_id = ?
+                      AND quantity_remaining > 0
+                    ORDER BY
+                      expiration_date IS NULL ASC,
+                      expiration_date ASC,
+                      received_at ASC,
+                      id ASC
+                `)
+                .all(productId)
+
+            const availableStock = batches.reduce(
+                (total, batch) => total + batch.quantityRemaining,
+                0,
+            )
+
+            if (quantity > availableStock) {
+                return {
+                    insufficientStock: true,
+                    currentStock: availableStock,
+                }
+            }
+
+            let remainingToSell = quantity
+
+            const updateBatch = db.prepare(`
+                UPDATE inventory_batches
+                SET quantity_remaining = quantity_remaining - ?
+                WHERE id = ?
+                  AND quantity_remaining >= ?
+            `)
+
+            const recordMovement = db.prepare(`
+                INSERT INTO inventory_movements (
+                    product_id,
+                    batch_id,
+                    movement_type,
+                    quantity_change
+                )
+                VALUES (?, ?, 'sale', ?)
+            `)
+
+            for (const batch of batches) {
+                if (remainingToSell <= 0) {
+                    break
+                }
+
+                const quantityFromBatch = Math.min(
+                    batch.quantityRemaining,
+                    remainingToSell,
+                )
+
+                if (quantityFromBatch <= 0) {
+                    continue
+                }
+
+                const updateResult = updateBatch.run(
+                    quantityFromBatch,
+                    batch.id,
+                    quantityFromBatch,
+                )
+
+                if (updateResult.changes !== 1) {
+                    throw new Error('Inventory update failed')
+                }
+
+                recordMovement.run(
+                    productId,
+                    batch.id,
+                    -quantityFromBatch,
+                )
+
+                remainingToSell = Math.max(
+                    0,
+                    remainingToSell - quantityFromBatch,
+                )
+            }
+
+            const currentStock = db
+                .prepare(`
+                    SELECT COALESCE(SUM(quantity_remaining), 0) AS currentStock
+                    FROM inventory_batches
+                    WHERE product_id = ?
+                `)
+                .get(productId).currentStock
+
+            return {
+                insufficientStock: false,
+                currentStock,
+            }
+        })()
+
+        if (saleResult.insufficientStock) {
+            logEvent('warn', 'sale_rejected_insufficient_stock', {
+                productId,
+                quantityRequested: quantity,
+                currentStock: saleResult.currentStock,
+            })
+
+            return res.status(409).json({
+                error: 'Insufficient stock for this sale.',
+                currentStock: saleResult.currentStock,
+            })
+        }
+
+        logEvent('info', 'sale_recorded', {
+            productId,
+            quantitySold: quantity,
+            currentStock: saleResult.currentStock,
+        })
+
+        return res.status(201).json({
+            productId,
+            quantitySold: quantity,
+            currentStock: saleResult.currentStock,
+        })
+    } catch (error) {
+        logEvent('error', 'sale_creation_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to record sale.',
         })
     }
 })

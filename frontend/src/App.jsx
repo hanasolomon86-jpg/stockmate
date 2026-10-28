@@ -322,6 +322,69 @@ async function handleDeleteCategory(category) {
     setDeletingCategoryId(null)
   }
 }
+
+async function handleRecordSale(product) {
+  const enteredQuantity = window.prompt(
+    `Enter quantity sold for ${product.name}:`,
+    '1',
+  )
+
+  if (enteredQuantity === null) {
+    return
+  }
+
+  const quantity = Number(enteredQuantity)
+
+  if (
+    enteredQuantity.trim() === '' ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    setActionError('Sale quantity must be a positive number.')
+    return
+  }
+
+  setActionError('')
+
+  try {
+    const response = await fetch(`/api/products/${product.id}/sales`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ quantity }),
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      const availableStock =
+        response.status === 409 &&
+        typeof result.currentStock === 'number'
+          ? ` Available stock: ${result.currentStock}.`
+          : ''
+
+      throw new Error(
+        `${result.error || 'Failed to record sale.'}${availableStock}`,
+      )
+    }
+
+    const productsResponse = await fetch('/api/products')
+
+    if (!productsResponse.ok) {
+      throw new Error(
+        'Sale was recorded, but the product catalog could not refresh. Please refresh the page.',
+      )
+    }
+
+    const updatedProducts = await productsResponse.json()
+    setProducts(updatedProducts)
+  } catch (error) {
+    console.error('Failed to record sale:', error)
+    setActionError(error.message || 'Could not record sale.')
+  }
+}
+
 async function handleDelete(product) {
   const confirmed = window.confirm(
     `Are you sure you want to delete "${product.name}"?`,
@@ -719,6 +782,15 @@ try {
             <td>{product.targetStock}</td>
             <td>{product.barcode || '—'}</td>
             <td>
+  <button
+  className="text-button"
+  type="button"
+  onClick={() => handleRecordSale(product)}
+  aria-label={`Record sale for ${product.name}`}
+>
+  Record sale
+</button>
+
   <button
     className="text-button"
     type="button"
