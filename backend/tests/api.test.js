@@ -200,7 +200,43 @@ test('StockMate API', async (t) => {
             ),
         )
     })
+    await t.test('invalid product and category IDs are rejected', async () => {
+        await request(app)
+            .put('/api/products/not-a-number')
+            .send({})
+            .expect(400)
 
+        await request(app)
+            .delete('/api/products/not-a-number')
+            .expect(400)
+
+        await request(app)
+            .put('/api/categories/not-a-number')
+            .send({ name: 'Updated Category' })
+            .expect(400)
+
+        await request(app)
+            .delete('/api/categories/not-a-number')
+            .expect(400)
+
+        await request(app)
+            .put('/api/products/9007199254740992')
+            .send({})
+            .expect(400)
+
+        await request(app)
+            .delete('/api/products/9007199254740992')
+            .expect(400)
+
+        await request(app)
+            .put('/api/categories/9007199254740992')
+            .send({ name: 'Updated Category' })
+            .expect(400)
+
+        await request(app)
+            .delete('/api/categories/9007199254740992')
+            .expect(400)
+    })
     await t.test('duplicate category names are rejected', async () => {
         const categoryName = `Test Category ${process.pid}`
 
