@@ -237,6 +237,94 @@ test('StockMate API', async (t) => {
             .delete('/api/categories/9007199254740992')
             .expect(400)
     })
+
+    await t.test('inventory can be received and retrieved', async () => {
+        const productResponse = await request(app)
+            .post('/api/products')
+            .send({
+                name: 'Milk for Inventory Test',
+                category: 'Dairy',
+                unit: 'liter',
+                salePrice: 6,
+                minStock: 2,
+                targetStock: 10,
+                barcode: `TEST-INVENTORY-${process.pid}`,
+            })
+            .expect(201)
+
+        const productId = productResponse.body.id
+
+        const receiveResponse = await request(app)
+            .post(`/api/products/${productId}/inventory-batches`)
+            .send({
+                quantity: 12,
+                expirationDate: '2026-11-08',
+            })
+            .expect(201)
+
+        assert.equal(receiveResponse.body.productId, productId)
+        assert.equal(receiveResponse.body.quantityReceived, 12)
+        assert.equal(receiveResponse.body.quantityRemaining, 12)
+        assert.equal(receiveResponse.body.expirationDate, '2026-11-08')
+
+        const batchesResponse = await request(app)
+            .get(`/api/products/${productId}/inventory-batches`)
+            .expect(200)
+
+        assert.equal(batchesResponse.body.length, 1)
+        assert.equal(batchesResponse.body[0].quantityRemaining, 12)
+
+        const deleteResponse = await request(app)
+            .delete(`/api/products/${productId}`)
+            .expect(409)
+
+        assert.match(
+            deleteResponse.body.error,
+            /inventory batches/i,
+        )
+    })
+
+    await t.test('invalid inventory requests are rejected', async () => {
+        const productResponse = await request(app)
+            .post('/api/products')
+            .send({
+                name: 'Invalid Inventory Test',
+                category: 'Dairy',
+                unit: 'liter',
+                salePrice: 5,
+                minStock: 1,
+                targetStock: 5,
+                barcode: `TEST-INVALID-INVENTORY-${process.pid}`,
+            })
+            .expect(201)
+
+        const productId = productResponse.body.id
+
+        await request(app)
+            .post(`/api/products/${productId}/inventory-batches`)
+            .send({ quantity: 0 })
+            .expect(400)
+
+        await request(app)
+            .post(`/api/products/${productId}/inventory-batches`)
+            .send({
+                quantity: 5,
+                expirationDate: '2026-02-30',
+            })
+            .expect(400)
+
+        await request(app)
+            .post('/api/products/999999/inventory-batches')
+            .send({ quantity: 5 })
+            .expect(404)
+
+        const batchesResponse = await request(app)
+            .get(`/api/products/${productId}/inventory-batches`)
+            .expect(200)
+
+        assert.equal(batchesResponse.body.length, 0)
+    })
+
     await t.test('duplicate category names are rejected', async () => {
         const categoryName = `Test Category ${process.pid}`
 

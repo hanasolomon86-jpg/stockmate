@@ -39,6 +39,30 @@ db.exec(`
   )
 `)
 
+// Store received inventory in separate batches.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS inventory_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL
+      REFERENCES products(id) ON DELETE RESTRICT,
+    quantity_received REAL NOT NULL
+      CHECK (quantity_received > 0),
+    quantity_remaining REAL NOT NULL
+      CHECK (
+        quantity_remaining >= 0
+        AND quantity_remaining <= quantity_received
+      ),
+    expiration_date TEXT,
+    received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+// Speed up inventory lookups by product.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_inventory_batches_product_id
+  ON inventory_batches(product_id)
+`)
+
 // Insert the initial categories without duplicating existing ones.
 const defaultCategories = [
   'Produce',

@@ -38,10 +38,33 @@ const productFields = `
   sale_price AS salePrice,
   min_stock AS minStock,
   target_stock AS targetStock,
+    COALESCE(
+    (
+      SELECT SUM(quantity_remaining)
+      FROM inventory_batches
+      WHERE product_id = products.id
+    ),
+    0
+  ) AS currentStock,
   barcode,
   created_at AS createdAt,
   updated_at AS updatedAt
 `
+function isValidDateOnly(value) {
+    if (
+        typeof value !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(value)
+    ) {
+        return false
+    }
+
+    const date = new Date(`${value}T00:00:00.000Z`)
+
+    return (
+        !Number.isNaN(date.getTime()) &&
+        date.toISOString().slice(0, 10) === value
+    )
+}
 
 // Health check.
 app.get('/api/health', (req, res) => {
@@ -49,6 +72,157 @@ app.get('/api/health', (req, res) => {
         status: 'ok',
         message: 'StockMate API is running',
     })
+})
+
+// Receive inventory for an existing product.
+app.post('/api/products/:id/inventory-batches', (req, res) => {
+    const productId = Number(req.params.id)
+
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    const { quantity, expirationDate } = req.body ?? {}
+
+    if (
+        typeof quantity !== 'number' ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0
+    ) {
+        return res.status(400).json({
+            error: 'Quantity must be a positive number.',
+        })
+    }
+
+    const cleanExpirationDate =
+        expirationDate === undefined ||
+            expirationDate === null ||
+            expirationDate === ''
+            ? null
+            : expirationDate
+
+    if (
+        cleanExpirationDate !== null &&
+        !isValidDateOnly(cleanExpirationDate)
+    ) {
+        return res.status(400).json({
+            error: 'Expiration date must be a valid date in YYYY-MM-DD format.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare('SELECT id FROM products WHERE id = ?')
+            .get(productId)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const result = db
+            .prepare(`
+                INSERT INTO inventory_batches (
+                    product_id,
+                    quantity_received,
+                    quantity_remaining,
+                    expiration_date
+                )
+                VALUES (?, ?, ?, ?)
+            `)
+            .run(
+                productId,
+                quantity,
+                quantity,
+                cleanExpirationDate,
+            )
+
+        const batch = db
+            .prepare(`
+                SELECT
+                    id,
+                    product_id AS productId,
+                    quantity_received AS quantityReceived,
+                    quantity_remaining AS quantityRemaining,
+                    expiration_date AS expirationDate,
+                    received_at AS receivedAt
+                FROM inventory_batches
+                WHERE id = ?
+            `)
+            .get(result.lastInsertRowid)
+
+        logEvent('info', 'inventory_batch_received', {
+            productId,
+            batchId: batch.id,
+            quantityReceived: quantity,
+            expirationDate: cleanExpirationDate,
+        })
+
+        return res.status(201).json(batch)
+    } catch (error) {
+        logEvent('error', 'inventory_batch_creation_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to receive inventory.',
+        })
+    }
+})
+
+// Retrieve inventory batches for an existing product.
+app.get('/api/products/:id/inventory-batches', (req, res) => {
+    const productId = Number(req.params.id)
+
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare('SELECT id FROM products WHERE id = ?')
+            .get(productId)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const batches = db
+            .prepare(`
+                SELECT
+                    id,
+                    product_id AS productId,
+                    quantity_received AS quantityReceived,
+                    quantity_remaining AS quantityRemaining,
+                    expiration_date AS expirationDate,
+                    received_at AS receivedAt
+                FROM inventory_batches
+                WHERE product_id = ?
+                ORDER BY expiration_date IS NULL,
+                         expiration_date ASC,
+                         received_at DESC
+            `)
+            .all(productId)
+
+        return res.status(200).json(batches)
+    } catch (error) {
+        logEvent('error', 'inventory_batches_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve inventory batches.',
+        })
+    }
 })
 
 // Return all products stored in SQLite.
@@ -311,6 +485,20 @@ app.delete('/api/products/:id', (req, res) => {
         if (!product) {
             return res.status(404).json({
                 error: 'Product not found.',
+            })
+        }
+
+        const inventoryBatches = db
+            .prepare(`
+                SELECT COUNT(*) AS count
+                FROM inventory_batches
+                WHERE product_id = ?
+            `)
+            .get(id)
+
+        if (inventoryBatches.count > 0) {
+            return res.status(409).json({
+                error: 'Products with inventory batches cannot be deleted.',
             })
         }
 

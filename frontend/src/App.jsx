@@ -18,6 +18,15 @@ const emptyForm = {
 
 function App() {
   const [products, setProducts] = useState([])
+  const [inventoryProduct, setInventoryProduct] = useState(null)
+const [inventoryBatches, setInventoryBatches] = useState([])
+const [inventoryForm, setInventoryForm] = useState({
+  quantity: '',
+  expirationDate: '',
+})
+const [inventoryError, setInventoryError] = useState('')
+const [isLoadingInventory, setIsLoadingInventory] = useState(false)
+const [isReceivingInventory, setIsReceivingInventory] = useState(false)
 const [isLoadingProducts, setIsLoadingProducts] = useState(true)
 const [productsError, setProductsError] = useState('')
 const [categories, setCategories] = useState([])
@@ -346,6 +355,121 @@ async function handleDelete(product) {
     )
   }
 }
+
+async function loadInventoryBatches(productId) {
+  setIsLoadingInventory(true)
+  setInventoryError('')
+
+  try {
+    const response = await fetch(
+      `/api/products/${productId}/inventory-batches`,
+    )
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to load inventory.')
+    }
+
+    setInventoryBatches(result)
+  } catch (error) {
+    console.error('Failed to load inventory batches:', error)
+    setInventoryError('Could not load inventory batches.')
+  } finally {
+    setIsLoadingInventory(false)
+  }
+}
+
+async function openInventoryModal(product) {
+  setInventoryProduct(product)
+  setInventoryBatches([])
+  setInventoryForm({
+    quantity: '',
+    expirationDate: '',
+  })
+  setInventoryError('')
+
+  await loadInventoryBatches(product.id)
+}
+
+async function handleReceiveInventory(event) {
+  event.preventDefault()
+
+  if (!inventoryProduct) {
+    return
+  }
+
+  const quantity = Number(inventoryForm.quantity)
+
+  if (
+    inventoryForm.quantity.trim() === '' ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    setInventoryError('Quantity must be a positive number.')
+    return
+  }
+
+  setInventoryError('')
+  setIsReceivingInventory(true)
+
+  try {
+    const response = await fetch(
+      `/api/products/${inventoryProduct.id}/inventory-batches`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          quantity,
+          expirationDate: inventoryForm.expirationDate || null,
+        }),
+      },
+    )
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to receive inventory.')
+    }
+
+    setInventoryForm({
+  quantity: '',
+  expirationDate: '',
+})
+
+await loadInventoryBatches(inventoryProduct.id)
+
+// Refresh the product catalog with current inventory totals.
+try {
+  const productsResponse = await fetch('/api/products')
+
+  if (!productsResponse.ok) {
+    throw new Error('Failed to refresh products.')
+  }
+
+  const updatedProducts = await productsResponse.json()
+  setProducts(updatedProducts)
+} catch (refreshError) {
+  console.error(
+    'Inventory was received, but the product catalog could not refresh:',
+    refreshError,
+  )
+
+  setActionError(
+    'Inventory was received, but the product catalog could not refresh. Please refresh the page.',
+  )
+}
+  } catch (error) {
+    console.error('Failed to receive inventory:', error)
+    setInventoryError(
+      error.message || 'Could not receive inventory.',
+    )
+  } finally {
+    setIsReceivingInventory(false)
+  }
+}
+
   async function handleSubmit(event) {
     event.preventDefault()
 
@@ -573,6 +697,7 @@ async function handleDelete(product) {
           <th scope="col">Category</th>
           <th scope="col">Unit</th>
           <th scope="col">Sale price</th>
+          <th scope="col">Current stock</th>
           <th scope="col">Min. stock</th>
           <th scope="col">Target stock</th>
           <th scope="col">Barcode</th>
@@ -589,6 +714,7 @@ async function handleDelete(product) {
             <td>{product.category}</td>
             <td>{product.unit}</td>
             <td>₪{product.salePrice.toFixed(2)}</td>
+            <td>{(product.currentStock ?? 0).toLocaleString()}</td>
             <td>{product.minStock}</td>
             <td>{product.targetStock}</td>
             <td>{product.barcode || '—'}</td>
@@ -601,6 +727,15 @@ async function handleDelete(product) {
   >
     Edit
   </button>
+
+<button
+  className="text-button"
+  type="button"
+  onClick={() => openInventoryModal(product)}
+  aria-label={`Receive stock for ${product.name}`}
+>
+  Receive stock
+</button>
 
   <button
     className="text-button delete-button"
@@ -618,6 +753,144 @@ async function handleDelete(product) {
   </div>
 )}
         </section>
+
+{inventoryProduct && (
+  <div className="modal-backdrop">
+    <section
+      className="product-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inventory-modal-title"
+    >
+      <div className="modal-heading">
+        <h2 id="inventory-modal-title">
+          Receive stock — {inventoryProduct.name}
+        </h2>
+
+        <button
+          className="close-button"
+          type="button"
+          onClick={() => setInventoryProduct(null)}
+          aria-label="Close inventory form"
+        >
+          ×
+        </button>
+      </div>
+
+      <form onSubmit={handleReceiveInventory}>
+        <div className="form-grid">
+          <div className="form-field">
+            <label htmlFor="inventory-quantity">
+              Quantity received *
+            </label>
+            <input
+              id="inventory-quantity"
+              type="number"
+              min="0.001"
+              step="any"
+              required
+              value={inventoryForm.quantity}
+              onChange={(event) =>
+                setInventoryForm((previous) => ({
+                  ...previous,
+                  quantity: event.target.value,
+                }))
+              }
+            />
+          </div>
+
+          <div className="form-field">
+            <label htmlFor="inventory-expiration">
+              Expiration date
+            </label>
+            <input
+              id="inventory-expiration"
+              type="date"
+              value={inventoryForm.expirationDate}
+              onChange={(event) =>
+                setInventoryForm((previous) => ({
+                  ...previous,
+                  expirationDate: event.target.value,
+                }))
+              }
+            />
+          </div>
+        </div>
+
+        {inventoryError && (
+          <p className="form-error" role="alert">
+            {inventoryError}
+          </p>
+        )}
+
+        <div className="form-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setInventoryProduct(null)}
+          >
+            Close
+          </button>
+
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={isReceivingInventory}
+          >
+            {isReceivingInventory ? 'Saving...' : 'Receive stock'}
+          </button>
+        </div>
+      </form>
+
+      <div className="section-heading">
+        <h3>Inventory batches</h3>
+      </div>
+
+      <p>
+        Current available quantity:{' '}
+        <strong>
+          {inventoryBatches
+            .reduce(
+              (total, batch) => total + batch.quantityRemaining,
+              0,
+            )
+            .toLocaleString()}
+        </strong>
+      </p>
+
+      {isLoadingInventory ? (
+        <p className="empty-state">Loading inventory...</p>
+      ) : inventoryBatches.length === 0 ? (
+        <p className="empty-state">
+          No inventory has been received for this product yet.
+        </p>
+      ) : (
+        <div className="table-wrapper">
+          <table className="product-table">
+            <thead>
+              <tr>
+                <th scope="col">Received</th>
+                <th scope="col">Expiration</th>
+                <th scope="col">Received quantity</th>
+                <th scope="col">Remaining quantity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryBatches.map((batch) => (
+                <tr key={batch.id}>
+                  <td>{batch.receivedAt}</td>
+                  <td>{batch.expirationDate || '—'}</td>
+                  <td>{batch.quantityReceived}</td>
+                  <td>{batch.quantityRemaining}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  </div>
+)}
 
         {isFormOpen && (
           <div className="modal-backdrop">
