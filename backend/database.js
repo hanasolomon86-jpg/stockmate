@@ -55,6 +55,27 @@ db.exec(`
   )
 `)
 
+// Add preferred supplier and purchase cost to existing products.
+const productColumnNames = new Set(
+  db.pragma('table_info(products)').map((column) => column.name),
+)
+
+if (!productColumnNames.has('preferred_supplier_id')) {
+  db.exec(`
+        ALTER TABLE products
+        ADD COLUMN preferred_supplier_id INTEGER
+        REFERENCES suppliers(id) ON DELETE SET NULL
+    `)
+}
+
+if (!productColumnNames.has('purchase_unit_cost')) {
+  db.exec(`
+        ALTER TABLE products
+        ADD COLUMN purchase_unit_cost REAL NOT NULL DEFAULT 0
+        CHECK (purchase_unit_cost >= 0)
+    `)
+}
+
 // Store purchase orders and their workflow status.
 db.exec(`
   CREATE TABLE IF NOT EXISTS purchase_orders (

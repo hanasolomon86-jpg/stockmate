@@ -61,11 +61,20 @@ function PurchaseOrderManagement() {
       }
     }
 
-    loadInitialData()
+    window.addEventListener(
+  'stockmate:purchase-orders-updated',
+  loadInitialData,
+)
 
-    return () => {
-      isCurrent = false
-    }
+loadInitialData()
+
+return () => {
+  isCurrent = false
+  window.removeEventListener(
+    'stockmate:purchase-orders-updated',
+    loadInitialData,
+  )
+}
   }, [])
 
   async function refreshData() {

@@ -38,6 +38,8 @@ const productFields = `
   sale_price AS salePrice,
   min_stock AS minStock,
   target_stock AS targetStock,
+  preferred_supplier_id AS preferredSupplierId,
+purchase_unit_cost AS purchaseUnitCost,
     COALESCE(
     (
       SELECT SUM(quantity_remaining)
@@ -719,6 +721,8 @@ app.post('/api/products', (req, res) => {
         minStock,
         targetStock,
         barcode,
+        preferredSupplierId,
+        purchaseUnitCost,
     } = req.body
 
     // Validate required text fields.
@@ -773,20 +777,73 @@ app.post('/api/products', (req, res) => {
 
     const cleanBarcode = barcode?.trim() || null
 
+    const cleanPreferredSupplierId =
+        preferredSupplierId === undefined ||
+            preferredSupplierId === null ||
+            preferredSupplierId === ''
+            ? null
+            : Number(preferredSupplierId)
+
+    const cleanPurchaseUnitCost =
+        purchaseUnitCost === undefined ? 0 : purchaseUnitCost
+
+    if (
+        cleanPreferredSupplierId !== null &&
+        (!Number.isSafeInteger(cleanPreferredSupplierId) ||
+            cleanPreferredSupplierId <= 0)
+    ) {
+        return res.status(400).json({
+            error: 'Preferred supplier ID is invalid.',
+        })
+    }
+
+    if (
+        typeof cleanPurchaseUnitCost !== 'number' ||
+        !Number.isFinite(cleanPurchaseUnitCost) ||
+        cleanPurchaseUnitCost < 0
+    ) {
+        return res.status(400).json({
+            error: 'Purchase unit cost must be a non-negative number.',
+        })
+    }
+
     try {
+        if (cleanPreferredSupplierId !== null) {
+            const supplier = db
+                .prepare(`
+            SELECT id, is_active AS isActive
+            FROM suppliers
+            WHERE id = ?
+        `)
+                .get(cleanPreferredSupplierId)
+
+            if (!supplier) {
+                return res.status(404).json({
+                    error: 'Preferred supplier not found.',
+                })
+            }
+
+            if (!supplier.isActive) {
+                return res.status(409).json({
+                    error: 'Preferred supplier must be active.',
+                })
+            }
+        }
         const result = db
             .prepare(`
         INSERT INTO products (
-          name,
-          category,
-          unit,
-          sale_price,
-          min_stock,
-          target_stock,
-          barcode
+            name,
+            category,
+            unit,
+            sale_price,
+            min_stock,
+            target_stock,
+            preferred_supplier_id,
+            purchase_unit_cost,
+            barcode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
             .run(
                 name.trim(),
                 category.trim(),
@@ -794,6 +851,8 @@ app.post('/api/products', (req, res) => {
                 salePrice,
                 minStock,
                 targetStock,
+                cleanPreferredSupplierId,
+                cleanPurchaseUnitCost,
                 cleanBarcode,
             )
 
@@ -837,6 +896,8 @@ app.put('/api/products/:id', (req, res) => {
         minStock,
         targetStock,
         barcode,
+        preferredSupplierId,
+        purchaseUnitCost,
     } = req.body
 
     if (
@@ -882,6 +943,76 @@ app.put('/api/products/:id', (req, res) => {
     const cleanBarcode = barcode?.trim() || null
 
     try {
+        const existingProduct = db
+            .prepare(`
+        SELECT
+            id,
+            preferred_supplier_id AS preferredSupplierId,
+            purchase_unit_cost AS purchaseUnitCost
+        FROM products
+        WHERE id = ?
+    `)
+            .get(id)
+
+        if (!existingProduct) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const cleanPreferredSupplierId =
+            preferredSupplierId === undefined
+                ? existingProduct.preferredSupplierId
+                : preferredSupplierId === null || preferredSupplierId === ''
+                    ? null
+                    : Number(preferredSupplierId)
+
+        const cleanPurchaseUnitCost =
+            purchaseUnitCost === undefined
+                ? existingProduct.purchaseUnitCost
+                : purchaseUnitCost
+
+        if (
+            cleanPreferredSupplierId !== null &&
+            (!Number.isSafeInteger(cleanPreferredSupplierId) ||
+                cleanPreferredSupplierId <= 0)
+        ) {
+            return res.status(400).json({
+                error: 'Preferred supplier ID is invalid.',
+            })
+        }
+
+        if (
+            typeof cleanPurchaseUnitCost !== 'number' ||
+            !Number.isFinite(cleanPurchaseUnitCost) ||
+            cleanPurchaseUnitCost < 0
+        ) {
+            return res.status(400).json({
+                error: 'Purchase unit cost must be a non-negative number.',
+            })
+        }
+
+        if (cleanPreferredSupplierId !== null) {
+            const supplier = db
+                .prepare(`
+            SELECT id, is_active AS isActive
+            FROM suppliers
+            WHERE id = ?
+        `)
+                .get(cleanPreferredSupplierId)
+
+            if (!supplier) {
+                return res.status(404).json({
+                    error: 'Preferred supplier not found.',
+                })
+            }
+
+            if (!supplier.isActive) {
+                return res.status(409).json({
+                    error: 'Preferred supplier must be active.',
+                })
+            }
+        }
         const result = db
             .prepare(`
         UPDATE products
@@ -892,6 +1023,8 @@ app.put('/api/products/:id', (req, res) => {
           sale_price = ?,
           min_stock = ?,
           target_stock = ?,
+          preferred_supplier_id = ?,
+purchase_unit_cost = ?,
           barcode = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -903,6 +1036,8 @@ app.put('/api/products/:id', (req, res) => {
                 salePrice,
                 minStock,
                 targetStock,
+                cleanPreferredSupplierId,
+                cleanPurchaseUnitCost,
                 cleanBarcode,
                 id,
             )
@@ -1288,6 +1423,251 @@ function getPurchaseOrderById(orderId) {
 
     return { ...order, items }
 }
+
+// Calculate low-stock alerts and recommended reorder quantities.
+function getLowStockAlerts() {
+    const products = db
+        .prepare(`
+            SELECT
+                p.id,
+                p.name,
+                p.category,
+                p.unit,
+                p.min_stock AS minStock,
+                p.target_stock AS targetStock,
+                p.preferred_supplier_id AS preferredSupplierId,
+                p.purchase_unit_cost AS purchaseUnitCost,
+                s.name AS preferredSupplierName,
+                s.is_active AS preferredSupplierIsActive,
+
+                COALESCE(
+                    (
+                        SELECT SUM(b.quantity_remaining)
+                        FROM inventory_batches AS b
+                        WHERE b.product_id = p.id
+                    ),
+                    0
+                ) AS currentStock,
+
+                COALESCE(
+                    (
+                        SELECT SUM(
+                            poi.ordered_quantity - poi.received_quantity
+                        )
+                        FROM purchase_order_items AS poi
+                        JOIN purchase_orders AS po
+                            ON po.id = poi.purchase_order_id
+                        WHERE poi.product_id = p.id
+                          AND po.status IN (
+                              'ordered',
+                              'partially_received'
+                          )
+                    ),
+                    0
+                ) AS incomingQuantity,
+
+                (
+                    SELECT po.id
+                    FROM purchase_orders AS po
+                    JOIN purchase_order_items AS poi
+                        ON poi.purchase_order_id = po.id
+                    WHERE po.supplier_id = p.preferred_supplier_id
+                      AND poi.product_id = p.id
+                      AND po.status = 'draft'
+                    ORDER BY po.created_at DESC, po.id DESC
+                    LIMIT 1
+                ) AS existingDraftOrderId
+
+            FROM products AS p
+            LEFT JOIN suppliers AS s
+                ON s.id = p.preferred_supplier_id
+
+            WHERE COALESCE(
+                (
+                    SELECT SUM(b.quantity_remaining)
+                    FROM inventory_batches AS b
+                    WHERE b.product_id = p.id
+                ),
+                0
+            ) <= p.min_stock
+
+            ORDER BY p.name COLLATE NOCASE
+        `)
+        .all()
+
+    return products.map((product) => {
+        const recommendedQuantity = Math.max(
+            0,
+            product.targetStock -
+            product.currentStock -
+            product.incomingQuantity,
+        )
+
+        const hasPreferredSupplier =
+            product.preferredSupplierId !== null
+
+        const preferredSupplierActive =
+            product.preferredSupplierIsActive === 1
+
+        const draftAlreadyExists =
+            product.existingDraftOrderId !== null
+
+        return {
+            ...product,
+            projectedStock:
+                product.currentStock + product.incomingQuantity,
+            recommendedQuantity,
+            hasPreferredSupplier,
+            preferredSupplierActive,
+            draftAlreadyExists,
+            canGenerateDraft:
+                recommendedQuantity > 0 &&
+                hasPreferredSupplier &&
+                preferredSupplierActive &&
+                product.purchaseUnitCost > 0 &&
+                !draftAlreadyExists,
+        }
+    })
+}
+
+// Retrieve products whose available stock is at or below minimum.
+app.get('/api/stock-alerts', (req, res) => {
+    try {
+        return res.status(200).json(getLowStockAlerts())
+    } catch (error) {
+        logEvent('error', 'stock_alerts_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve stock alerts.',
+        })
+    }
+})
+
+// Generate draft purchase orders for eligible low-stock products.
+app.post('/api/stock-alerts/generate-drafts', (req, res) => {
+    try {
+        const result = db.transaction(() => {
+            // Recalculate alerts using the latest stock and order data.
+            const eligibleAlerts = getLowStockAlerts().filter(
+                (alert) => alert.canGenerateDraft,
+            )
+
+            const orderIds = new Set()
+            const createdOrderIds = new Set()
+            let addedItemCount = 0
+
+            const findDraftOrder = db.prepare(`
+                SELECT id
+                FROM purchase_orders
+                WHERE supplier_id = ?
+                  AND status = 'draft'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            `)
+
+            const createDraftOrder = db.prepare(`
+                INSERT INTO purchase_orders (supplier_id, notes)
+                VALUES (?, ?)
+            `)
+
+            const findExistingOrderItem = db.prepare(`
+                SELECT id
+                FROM purchase_order_items
+                WHERE purchase_order_id = ?
+                  AND product_id = ?
+            `)
+
+            const insertOrderItem = db.prepare(`
+                INSERT INTO purchase_order_items (
+                    purchase_order_id,
+                    product_id,
+                    ordered_quantity,
+                    unit_cost
+                )
+                VALUES (?, ?, ?, ?)
+            `)
+
+            for (const alert of eligibleAlerts) {
+                let draftOrder = findDraftOrder.get(
+                    alert.preferredSupplierId,
+                )
+
+                let orderId
+
+                if (draftOrder) {
+                    orderId = draftOrder.id
+                } else {
+                    const createdOrder = createDraftOrder.run(
+                        alert.preferredSupplierId,
+                        'Generated from a low-stock alert. Review before ordering.',
+                    )
+
+                    orderId = Number(createdOrder.lastInsertRowid)
+                    createdOrderIds.add(orderId)
+                }
+
+                // Avoid adding the same product twice to one draft.
+                const existingItem = findExistingOrderItem.get(
+                    orderId,
+                    alert.id,
+                )
+
+                if (existingItem) {
+                    continue
+                }
+
+                insertOrderItem.run(
+                    orderId,
+                    alert.id,
+                    alert.recommendedQuantity,
+                    alert.purchaseUnitCost,
+                )
+
+                orderIds.add(orderId)
+                addedItemCount++
+            }
+
+            return {
+                orderIds: [...orderIds],
+                createdOrderIds: [...createdOrderIds],
+                addedItemCount,
+            }
+        })()
+
+        const orders = result.orderIds.map((id) =>
+            getPurchaseOrderById(id),
+        )
+
+        logEvent('info', 'low_stock_draft_generation_completed', {
+            createdOrderCount: result.createdOrderIds.length,
+            addedItemCount: result.addedItemCount,
+        })
+
+        return res
+            .status(result.createdOrderIds.length > 0 ? 201 : 200)
+            .json({
+                message:
+                    result.addedItemCount > 0
+                        ? 'Draft purchase orders generated successfully.'
+                        : 'No eligible low-stock products require a new draft.',
+                createdOrderCount: result.createdOrderIds.length,
+                addedItemCount: result.addedItemCount,
+                orders,
+            })
+    } catch (error) {
+        logEvent('error', 'low_stock_draft_generation_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to generate draft purchase orders.',
+        })
+    }
+})
 
 // Retrieve all purchase orders, including their items.
 app.get('/api/purchase-orders', (req, res) => {

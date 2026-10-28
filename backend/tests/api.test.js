@@ -1010,6 +1010,113 @@ test('StockMate API', async (t) => {
         },
     )
 
+    await t.test(
+        'low-stock alerts generate purchase order drafts only once',
+        async () => {
+            const supplierResponse = await request(app)
+                .post('/api/suppliers')
+                .send({
+                    name: `Low Stock Supplier ${process.pid}`,
+                    email: 'low-stock@example.com',
+                })
+                .expect(201)
+
+            const supplierId = supplierResponse.body.id
+
+            const productResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Product for Low Stock Draft Test',
+                    category: 'Pantry',
+                    unit: 'each',
+                    salePrice: 12,
+                    minStock: 5,
+                    targetStock: 12,
+                    preferredSupplierId: supplierId,
+                    purchaseUnitCost: 3,
+                    barcode: `TEST-LOW-STOCK-${process.pid}`,
+                })
+                .expect(201)
+
+            const productId = productResponse.body.id
+
+            const alertsResponse = await request(app)
+                .get('/api/stock-alerts')
+                .expect(200)
+
+            const alert = alertsResponse.body.find(
+                (item) => item.id === productId,
+            )
+
+            assert.ok(alert, 'The product should appear in stock alerts.')
+            assert.equal(alert.currentStock, 0)
+            assert.equal(alert.recommendedQuantity, 12)
+            assert.equal(alert.canGenerateDraft, true)
+
+            const generateResponse = await request(app)
+                .post('/api/stock-alerts/generate-drafts')
+                .expect(201)
+
+            assert.equal(generateResponse.body.createdOrderCount, 1)
+            assert.equal(generateResponse.body.addedItemCount, 1)
+
+            const generatedOrder =
+                generateResponse.body.orders.find(
+                    (order) =>
+                        order.items.some(
+                            (item) => item.productId === productId,
+                        ),
+                )
+
+            assert.ok(generatedOrder)
+            assert.equal(generatedOrder.status, 'draft')
+            assert.equal(generatedOrder.supplierId, supplierId)
+
+            const generatedItem = generatedOrder.items.find(
+                (item) => item.productId === productId,
+            )
+
+            assert.equal(generatedItem.orderedQuantity, 12)
+            assert.equal(generatedItem.unitCost, 3)
+            assert.equal(generatedItem.receivedQuantity, 0)
+
+            // Calling the generator again must not duplicate the draft item.
+            const secondGenerateResponse = await request(app)
+                .post('/api/stock-alerts/generate-drafts')
+                .expect(200)
+
+            assert.equal(
+                secondGenerateResponse.body.createdOrderCount,
+                0,
+            )
+            assert.equal(
+                secondGenerateResponse.body.addedItemCount,
+                0,
+            )
+
+            const orderAfterSecondCall = await request(app)
+                .get(`/api/purchase-orders/${generatedOrder.id}`)
+                .expect(200)
+
+            assert.equal(orderAfterSecondCall.body.items.length, 1)
+            assert.equal(
+                orderAfterSecondCall.body.items[0].orderedQuantity,
+                12,
+            )
+
+            // Generating a draft must not change the available inventory.
+            const productsResponse = await request(app)
+                .get('/api/products')
+                .expect(200)
+
+            const updatedProduct = productsResponse.body.find(
+                (product) => product.id === productId,
+            )
+
+            assert.equal(updatedProduct.currentStock, 0)
+        },
+    )
+
     await t.test('duplicate category names are rejected', async () => {
         const categoryName = `Test Category ${process.pid}`
 
