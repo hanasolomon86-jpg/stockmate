@@ -3,6 +3,7 @@ import './App.css'
 import CategoryManagement from './components/CategoryManagement'
 import SupplierManagement from './components/SupplierManagement'
 import PurchaseOrderManagement from './components/PurchaseOrderManagement'
+import LowStockAlerts from './components/LowStockAlerts'
 
 
 const units = ['each', 'kg', 'liter', 'pack', 'bottle']
@@ -15,6 +16,8 @@ const emptyForm = {
   salePrice: '',
   minStock: '',
   targetStock: '',
+  preferredSupplierId: '',
+  purchaseUnitCost: '',
   barcode: '',
 }
 
@@ -46,6 +49,7 @@ const [isReceivingInventory, setIsReceivingInventory] = useState(false)
 const [isLoadingProducts, setIsLoadingProducts] = useState(true)
 const [productsError, setProductsError] = useState('')
 const [categories, setCategories] = useState([])
+const [suppliers, setSuppliers] = useState([])
 const [categoriesError, setCategoriesError] = useState('')
 const [editingCategoryId, setEditingCategoryId] = useState(null)
 const [editingCategoryName, setEditingCategoryName] = useState('')
@@ -78,6 +82,8 @@ useEffect(() => {
 
   loadProducts()
 }, [])
+
+
 useEffect(() => {
   async function loadCategories() {
     try {
@@ -100,6 +106,35 @@ useEffect(() => {
 
   loadCategories()
 }, [])
+
+useEffect(() => {
+  let isCurrent = true
+
+  async function loadSuppliers() {
+    try {
+      const response = await fetch('/api/suppliers')
+
+      if (!response.ok) {
+        throw new Error('Failed to load suppliers.')
+      }
+
+      const data = await response.json()
+
+      if (isCurrent) {
+        setSuppliers(data)
+      }
+    } catch (error) {
+      console.error('Failed to load suppliers:', error)
+    }
+  }
+
+  loadSuppliers()
+
+  return () => {
+    isCurrent = false
+  }
+}, [])
+
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -134,6 +169,11 @@ useEffect(() => {
       salePrice: String(product.salePrice),
       minStock: String(product.minStock),
       targetStock: String(product.targetStock),
+      preferredSupplierId:
+  product.preferredSupplierId == null
+    ? ''
+    : String(product.preferredSupplierId),
+purchaseUnitCost: String(product.purchaseUnitCost ?? 0),
       barcode: product.barcode ?? '',
     })
     setFormError('')
@@ -705,6 +745,7 @@ async function handleDispositionSubmit(event) {
     const salePrice = Number(formData.salePrice)
     const minStock = Number(formData.minStock)
     const targetStock = Number(formData.targetStock)
+    const purchaseUnitCost = Number(formData.purchaseUnitCost)
     const barcode = formData.barcode.trim()
 
     if (!name || !formData.category || !formData.unit) {
@@ -720,6 +761,15 @@ async function handleDispositionSubmit(event) {
       setFormError('Sale price must be a valid non-negative number.')
       return
     }
+
+    if (
+  formData.purchaseUnitCost.trim() === '' ||
+  !Number.isFinite(purchaseUnitCost) ||
+  purchaseUnitCost < 0
+) {
+  setFormError('Purchase unit cost must be a non-negative number.')
+  return
+}
 
     if (
       formData.minStock.trim() === '' ||
@@ -776,7 +826,12 @@ async function handleDispositionSubmit(event) {
         salePrice,
         minStock,
         targetStock,
-        barcode,
+preferredSupplierId:
+  formData.preferredSupplierId === ''
+    ? null
+    : Number(formData.preferredSupplierId),
+purchaseUnitCost,
+barcode,
       }),
     },
   )
@@ -896,6 +951,7 @@ async function handleDispositionSubmit(event) {
   handleDeleteCategory={handleDeleteCategory}
 />
 <SupplierManagement />
+<LowStockAlerts />
 <PurchaseOrderManagement />
         <section className="product-list-section">
           <div className="section-heading">
@@ -1420,6 +1476,46 @@ async function handleDispositionSubmit(event) {
                       required
                     />
                   </div>
+
+                  <div className="form-field">
+  <label htmlFor="product-purchase-cost">
+    Purchase cost per unit (₪) *
+  </label>
+  <input
+    id="product-purchase-cost"
+    name="purchaseUnitCost"
+    type="number"
+    min="0"
+    step="0.01"
+    value={formData.purchaseUnitCost}
+    onChange={handleInputChange}
+    required
+  />
+</div>
+
+<div className="form-field">
+  <label htmlFor="product-preferred-supplier">
+    Preferred supplier
+  </label>
+  <select
+    id="product-preferred-supplier"
+    name="preferredSupplierId"
+    value={formData.preferredSupplierId}
+    onChange={handleInputChange}
+  >
+    <option value="">No preferred supplier</option>
+    {suppliers.map((supplier) => (
+      <option
+        key={supplier.id}
+        value={String(supplier.id)}
+        disabled={!supplier.isActive}
+      >
+        {supplier.name}
+        {supplier.isActive ? '' : ' (Inactive)'}
+      </option>
+    ))}
+  </select>
+</div>
 
                   <div className="form-field">
                     <label htmlFor="product-min-stock">Minimum stock *</label>

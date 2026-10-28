@@ -918,3 +918,53 @@ button:focus-visible,
     flex-wrap: wrap;
   }
 }
+
+/* Low-stock alerts */
+
+.stock-alerts-description {
+  margin: 0;
+  padding: 16px 24px 8px;
+  color: #68766d;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.stock-alerts-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 18px 24px;
+  border-top: 1px solid #e8ece7;
+}
+
+.stock-alerts-actions .field-help {
+  flex: 1;
+  min-width: 200px;
+  margin: 0;
+}
+
+.stock-alerts-actions .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.stock-alerts-management .product-table td {
+  vertical-align: middle;
+}
+
+@media (max-width: 600px) {
+  .stock-alerts-description {
+    padding: 14px 18px 8px;
+  }
+
+  .stock-alerts-actions {
+    align-items: stretch;
+    padding: 18px;
+  }
+
+  .stock-alerts-actions .primary-button {
+    width: 100%;
+  }
+}
