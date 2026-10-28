@@ -236,6 +236,58 @@ app.get('/api/products/:id/inventory-batches', (req, res) => {
     }
 })
 
+// Retrieve inventory movement history for a product.
+app.get('/api/products/:id/inventory-movements', (req, res) => {
+    const productId = Number(req.params.id)
+
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+        return res.status(400).json({
+            error: 'Invalid product ID.',
+        })
+    }
+
+    try {
+        const product = db
+            .prepare('SELECT id FROM products WHERE id = ?')
+            .get(productId)
+
+        if (!product) {
+            return res.status(404).json({
+                error: 'Product not found.',
+            })
+        }
+
+        const movements = db
+            .prepare(`
+                SELECT
+                    m.id,
+                    m.product_id AS productId,
+                    m.batch_id AS batchId,
+                    m.movement_type AS movementType,
+                    m.quantity_change AS quantityChange,
+                    m.created_at AS createdAt,
+                    b.expiration_date AS expirationDate
+                FROM inventory_movements AS m
+                LEFT JOIN inventory_batches AS b
+                    ON b.id = m.batch_id
+                WHERE m.product_id = ?
+                ORDER BY m.created_at DESC, m.id DESC
+            `)
+            .all(productId)
+
+        return res.status(200).json(movements)
+    } catch (error) {
+        logEvent('error', 'inventory_history_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve inventory history.',
+        })
+    }
+})
+
 // Record a sale and deduct stock from the earliest-expiring batches first.
 app.post('/api/products/:id/sales', (req, res) => {
     const productId = Number(req.params.id)

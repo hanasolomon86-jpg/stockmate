@@ -84,6 +84,31 @@ db.exec(`
   ON inventory_movements(product_id, created_at DESC)
 `)
 
+
+// Backfill receipt history for batches created before movement logging.
+db.exec(`
+  INSERT INTO inventory_movements (
+    product_id,
+    batch_id,
+    movement_type,
+    quantity_change,
+    created_at
+  )
+  SELECT
+    b.product_id,
+    b.id,
+    'received',
+    b.quantity_received,
+    b.received_at
+  FROM inventory_batches AS b
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM inventory_movements AS m
+    WHERE m.batch_id = b.id
+      AND m.movement_type = 'received'
+  )
+`)
+
 // Insert the initial categories without duplicating existing ones.
 const defaultCategories = [
   'Produce',
