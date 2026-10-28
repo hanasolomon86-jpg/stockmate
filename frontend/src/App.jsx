@@ -20,6 +20,9 @@ function App() {
   const [products, setProducts] = useState([])
   const [inventoryProduct, setInventoryProduct] = useState(null)
 const [inventoryBatches, setInventoryBatches] = useState([])
+const [inventoryMovements, setInventoryMovements] = useState([])
+const [isLoadingMovements, setIsLoadingMovements] = useState(false)
+const [movementsError, setMovementsError] = useState('')
 const [inventoryForm, setInventoryForm] = useState({
   quantity: '',
   expirationDate: '',
@@ -442,16 +445,46 @@ async function loadInventoryBatches(productId) {
   }
 }
 
+async function loadInventoryMovements(productId) {
+  setIsLoadingMovements(true)
+  setMovementsError('')
+
+  try {
+    const response = await fetch(
+      `/api/products/${productId}/inventory-movements`,
+    )
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(
+        result.error || 'Failed to load inventory history.',
+      )
+    }
+
+    setInventoryMovements(result)
+  } catch (error) {
+    console.error('Failed to load inventory history:', error)
+    setMovementsError('Could not load inventory history.')
+  } finally {
+    setIsLoadingMovements(false)
+  }
+}
+
 async function openInventoryModal(product) {
   setInventoryProduct(product)
   setInventoryBatches([])
+  setInventoryMovements([])
+setMovementsError('')
   setInventoryForm({
     quantity: '',
     expirationDate: '',
   })
   setInventoryError('')
 
-  await loadInventoryBatches(product.id)
+  await Promise.all([
+  loadInventoryBatches(product.id),
+  loadInventoryMovements(product.id),
+])
 }
 
 async function handleReceiveInventory(event) {
@@ -502,6 +535,7 @@ async function handleReceiveInventory(event) {
 })
 
 await loadInventoryBatches(inventoryProduct.id)
+await loadInventoryMovements(inventoryProduct.id)
 
 // Refresh the product catalog with current inventory totals.
 try {
@@ -954,6 +988,53 @@ try {
                   <td>{batch.expirationDate || '—'}</td>
                   <td>{batch.quantityReceived}</td>
                   <td>{batch.quantityRemaining}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+            <div className="section-heading">
+        <h3>Inventory history</h3>
+      </div>
+
+      {movementsError && (
+        <p className="form-error" role="alert">
+          {movementsError}
+        </p>
+      )}
+
+      {isLoadingMovements ? (
+        <p className="empty-state">Loading inventory history...</p>
+      ) : inventoryMovements.length === 0 ? (
+        <p className="empty-state">
+          No inventory movements recorded yet.
+        </p>
+      ) : (
+        <div className="table-wrapper">
+          <table className="product-table">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Action</th>
+                <th scope="col">Quantity change</th>
+                <th scope="col">Expiration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryMovements.map((movement) => (
+                <tr key={movement.id}>
+                  <td>{movement.createdAt}</td>
+                  <td>
+                    {movement.movementType === 'received'
+                      ? 'Stock received'
+                      : 'Sale'}
+                  </td>
+                  <td>
+                    {movement.quantityChange > 0 ? '+' : ''}
+                    {movement.quantityChange}
+                  </td>
+                  <td>{movement.expirationDate || '—'}</td>
                 </tr>
               ))}
             </tbody>

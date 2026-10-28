@@ -363,6 +363,27 @@ test('StockMate API', async (t) => {
             movements.map((movement) => movement.quantityChange),
             [5, 4, -4, -2],
         )
+        const historyResponse = await request(app)
+            .get(`/api/products/${productId}/inventory-movements`)
+            .expect(200)
+
+        assert.equal(historyResponse.body.length, 4)
+
+        assert.ok(
+            historyResponse.body.some(
+                (movement) =>
+                    movement.movementType === 'sale' &&
+                    movement.quantityChange === -2,
+            ),
+        )
+
+        assert.ok(
+            historyResponse.body.some(
+                (movement) =>
+                    movement.movementType === 'received' &&
+                    movement.quantityChange === 5,
+            ),
+        )
     })
 
     await t.test('invalid inventory requests are rejected', async () => {
