@@ -60,7 +60,7 @@ app.get('/api/products', (req, res) => {
 
         res.status(200).json(products)
     } catch (error) {
-        logEvent('error', 'products_retrieval_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'products_retrieval_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         res.status(500).json({
             error: 'Failed to retrieve products',
@@ -170,7 +170,7 @@ app.post('/api/products', (req, res) => {
             })
         }
 
-        logEvent('error', 'product_creation_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'product_creation_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to create product',
@@ -182,7 +182,7 @@ app.post('/api/products', (req, res) => {
 app.put('/api/products/:id', (req, res) => {
     const id = Number(req.params.id)
 
-    if (!Number.isInteger(id) || id <= 0) {
+    if (!Number.isSafeInteger(id) || id <= 0) {
         return res.status(400).json({
             error: 'Invalid product ID.',
         })
@@ -286,7 +286,7 @@ app.put('/api/products/:id', (req, res) => {
             })
         }
 
-        logEvent('error', 'product_update_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'product_update_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to update product',
@@ -323,7 +323,7 @@ app.delete('/api/products/:id', (req, res) => {
             id,
         })
     } catch (error) {
-        logEvent('error', 'product_deletion_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'product_deletion_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to delete product.',
@@ -346,7 +346,7 @@ app.get('/api/categories', (req, res) => {
 
         return res.status(200).json(categories)
     } catch (error) {
-        logEvent('error', 'categories_retrieval_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'categories_retrieval_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to retrieve categories',
@@ -397,7 +397,7 @@ app.post('/api/categories', (req, res) => {
             })
         }
 
-        logEvent('error', 'category_creation_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'category_creation_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to create category.',
@@ -470,7 +470,7 @@ app.put('/api/categories/:id', (req, res) => {
             })
         }
 
-        logEvent('error', 'category_update_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'category_update_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to update category.',
@@ -516,7 +516,7 @@ app.delete('/api/categories/:id', (req, res) => {
             id,
         })
     } catch (error) {
-        logEvent('error', 'category_deletion_failed', { message: error.message, stack: error.stack })
+        logEvent('error', 'category_deletion_failed', { errorName: error.name, errorCode: error.code || 'UNEXPECTED_ERROR' })
 
         return res.status(500).json({
             error: 'Failed to delete category.',

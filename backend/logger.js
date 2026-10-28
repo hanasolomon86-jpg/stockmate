@@ -20,8 +20,8 @@ function logEvent(level, event, details = {}) {
 
     try {
         fs.appendFileSync(logFilePath, line, 'utf8')
-    } catch (error) {
-        console.error('Failed to write application log:', error.message)
+    } catch {
+        console.error('Failed to write application log')
     }
 
     if (level === 'error') {
