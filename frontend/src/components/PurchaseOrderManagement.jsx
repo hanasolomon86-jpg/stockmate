@@ -330,7 +330,7 @@ return () => {
   )
 
   return (
-    <section className="category-management purchase-order-management">
+    <section className="category-management purchase-order-management" id="purchase-order-management">
       <div className="section-heading">
         <h2>Purchase orders</h2>
         <span>{orders.length} orders</span>

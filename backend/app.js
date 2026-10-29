@@ -238,6 +238,60 @@ app.get('/api/products/:id/inventory-batches', (req, res) => {
     }
 })
 
+// Retrieve inventory batches that expire within the requested number of days.
+// Defaults to 7 days; the allowed range is 1–30 days.
+app.get('/api/expiry-alerts', (req, res) => {
+    const days =
+        req.query.days === undefined ? 7 : Number(req.query.days)
+
+    if (!Number.isInteger(days) || days < 1 || days > 30) {
+        return res.status(400).json({
+            error: 'Days must be a whole number between 1 and 30.',
+        })
+    }
+
+    try {
+        const expiringBatches = db
+            .prepare(`
+                SELECT
+                    b.id AS batchId,
+                    b.product_id AS productId,
+                    p.name AS productName,
+                    p.category,
+                    p.unit,
+                    b.quantity_remaining AS quantityRemaining,
+                    b.expiration_date AS expirationDate,
+                    CAST(
+                        julianday(date(b.expiration_date)) -
+                        julianday(date('now'))
+                        AS INTEGER
+                    ) AS daysUntilExpiration
+                FROM inventory_batches AS b
+                JOIN products AS p
+                    ON p.id = b.product_id
+                WHERE b.quantity_remaining > 0
+                  AND b.expiration_date IS NOT NULL
+                  AND date(b.expiration_date) >= date('now')
+                  AND date(b.expiration_date) <= date('now', ?)
+                ORDER BY
+                    date(b.expiration_date) ASC,
+                    p.name COLLATE NOCASE
+            `)
+            .all(`+${days} days`)
+
+        return res.status(200).json(expiringBatches)
+    } catch (error) {
+        logEvent('error', 'expiry_alerts_retrieval_failed', {
+            errorName: error.name,
+            errorCode: error.code || 'UNEXPECTED_ERROR',
+        })
+
+        return res.status(500).json({
+            error: 'Failed to retrieve expiration alerts.',
+        })
+    }
+})
+
 // Retrieve inventory movement history for a product.
 app.get('/api/products/:id/inventory-movements', (req, res) => {
     const productId = Number(req.params.id)

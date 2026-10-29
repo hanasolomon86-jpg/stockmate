@@ -118,7 +118,7 @@ function LowStockAlerts() {
   ).length
 
   return (
-    <section className="category-management stock-alerts-management">
+    <section className="category-management stock-alerts-management" id="low-stock-alerts">
       <div className="section-heading">
         <h2>Low-stock alerts</h2>
         <span>{alerts.length} alerts</span>
