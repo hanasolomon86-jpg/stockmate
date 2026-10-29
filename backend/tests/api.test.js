@@ -1094,6 +1094,22 @@ test('StockMate API', async (t) => {
                 .expect(201)
 
             const productId = productResponse.body.id
+            const unselectedProductResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Unselected Product for Low Stock Draft Test',
+                    category: 'Pantry',
+                    unit: 'each',
+                    salePrice: 12,
+                    minStock: 5,
+                    targetStock: 12,
+                    preferredSupplierId: supplierId,
+                    purchaseUnitCost: 2,
+                    barcode: `TEST-LOW-STOCK-UNSELECTED-${process.pid}`,
+                })
+                .expect(201)
+
+            const unselectedProductId = unselectedProductResponse.body.id
 
             const alertsResponse = await request(app)
                 .get('/api/stock-alerts')
@@ -1108,8 +1124,15 @@ test('StockMate API', async (t) => {
             assert.equal(alert.recommendedQuantity, 12)
             assert.equal(alert.canGenerateDraft, true)
 
+            // An empty selection must be rejected.
+            await request(app)
+                .post('/api/stock-alerts/generate-drafts')
+                .send({ productIds: [] })
+                .expect(400)
+
             const generateResponse = await request(app)
                 .post('/api/stock-alerts/generate-drafts')
+                .send({ productIds: [productId] })
                 .expect(201)
 
             assert.equal(generateResponse.body.createdOrderCount, 1)
@@ -1124,6 +1147,13 @@ test('StockMate API', async (t) => {
                 )
 
             assert.ok(generatedOrder)
+            assert.equal(
+                generatedOrder.items.some(
+                    (item) => item.productId === unselectedProductId,
+                ),
+                false,
+                'The unselected product must not be added to a draft.',
+            )
             assert.equal(generatedOrder.status, 'draft')
             assert.equal(generatedOrder.supplierId, supplierId)
 
@@ -1138,6 +1168,7 @@ test('StockMate API', async (t) => {
             // Calling the generator again must not duplicate the draft item.
             const secondGenerateResponse = await request(app)
                 .post('/api/stock-alerts/generate-drafts')
+                .send({ productIds: [productId] })
                 .expect(200)
 
             assert.equal(

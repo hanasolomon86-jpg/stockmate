@@ -1602,11 +1602,31 @@ app.get('/api/stock-alerts', (req, res) => {
 
 // Generate draft purchase orders for eligible low-stock products.
 app.post('/api/stock-alerts/generate-drafts', (req, res) => {
+    const productIds = req.body?.productIds
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+        return res.status(400).json({
+            error: 'Select at least one product for draft generation.',
+        })
+    }
+
+    if (
+        productIds.some((id) => !Number.isInteger(id) || id <= 0) ||
+        new Set(productIds).size !== productIds.length
+    ) {
+        return res.status(400).json({
+            error: 'Product IDs must be unique positive integers.',
+        })
+    }
+
+    const selectedProductIds = new Set(productIds)
     try {
         const result = db.transaction(() => {
             // Recalculate alerts using the latest stock and order data.
             const eligibleAlerts = getLowStockAlerts().filter(
-                (alert) => alert.canGenerateDraft,
+                (alert) =>
+                    selectedProductIds.has(alert.id) &&
+                    alert.canGenerateDraft,
             )
 
             const orderIds = new Set()
@@ -1706,7 +1726,7 @@ app.post('/api/stock-alerts/generate-drafts', (req, res) => {
                 message:
                     result.addedItemCount > 0
                         ? 'Draft purchase orders generated successfully.'
-                        : 'No eligible low-stock products require a new draft.',
+                        : 'No selected products are currently eligible for draft generation.',
                 createdOrderCount: result.createdOrderIds.length,
                 addedItemCount: result.addedItemCount,
                 orders,
