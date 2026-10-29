@@ -1011,6 +1011,61 @@ test('StockMate API', async (t) => {
     )
 
     await t.test(
+        'expiry alerts return batches expiring within the requested period',
+        async () => {
+            const expiration = new Date()
+            expiration.setUTCDate(expiration.getUTCDate() + 3)
+            const expirationDate = expiration.toISOString().slice(0, 10)
+
+            const productResponse = await request(app)
+                .post('/api/products')
+                .send({
+                    name: 'Product for Expiry Alert Test',
+                    category: 'Dairy',
+                    unit: 'each',
+                    salePrice: 5,
+                    minStock: 1,
+                    targetStock: 5,
+                    barcode: `TEST-EXPIRY-ALERT-${process.pid}`,
+                })
+                .expect(201)
+
+            const productId = productResponse.body.id
+
+            await request(app)
+                .post(`/api/products/${productId}/inventory-batches`)
+                .send({
+                    quantity: 5,
+                    expirationDate,
+                })
+                .expect(201)
+
+            const response = await request(app)
+                .get('/api/expiry-alerts')
+                .expect(200)
+
+            const batch = response.body.find(
+                (item) => item.productId === productId,
+            )
+
+            assert.ok(batch, 'The expiring batch should appear in the alerts.')
+            assert.equal(batch.productName, 'Product for Expiry Alert Test')
+            assert.equal(batch.quantityRemaining, 5)
+            assert.equal(batch.expirationDate, expirationDate)
+            assert.ok(batch.daysUntilExpiration >= 0)
+            assert.ok(batch.daysUntilExpiration <= 7)
+
+            await request(app)
+                .get('/api/expiry-alerts?days=0')
+                .expect(400)
+
+            await request(app)
+                .get('/api/expiry-alerts?days=31')
+                .expect(400)
+        },
+    )
+
+    await t.test(
         'low-stock alerts generate purchase order drafts only once',
         async () => {
             const supplierResponse = await request(app)

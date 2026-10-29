@@ -4,6 +4,7 @@ import CategoryManagement from './components/CategoryManagement'
 import SupplierManagement from './components/SupplierManagement'
 import PurchaseOrderManagement from './components/PurchaseOrderManagement'
 import LowStockAlerts from './components/LowStockAlerts'
+import InventoryDashboard from './components/InventoryDashboard'
 
 
 const units = ['each', 'kg', 'liter', 'pack', 'bottle']
@@ -891,6 +892,13 @@ barcode,
             Manage your product catalog, categories, and stock targets.
           </p>
         </section>
+        <InventoryDashboard
+  products={products}
+  isLoadingProducts={isLoadingProducts}
+  productsError={productsError}
+  onOpenInventory={openInventoryModal}
+  onEditProduct={openEditForm}
+/>
         {categoriesError && (
   <p className="form-error" role="alert">
     {categoriesError}
@@ -953,7 +961,7 @@ barcode,
 <SupplierManagement />
 <LowStockAlerts />
 <PurchaseOrderManagement />
-        <section className="product-list-section">
+        <section className="product-list-section" id="product-catalog">
           <div className="section-heading">
             <h2>Product catalog</h2>
             <span>{filteredProducts.length} products</span>
