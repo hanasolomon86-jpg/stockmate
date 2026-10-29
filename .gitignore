@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+frontend/dist/
+dist/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local SQLite databases
+backend/data/*.db
+backend/data/*.db-*
+backend/data/*.sqlite
+backend/data/*.sqlite-*
+
+# Runtime logs
+*.log
+!backend/logs/
+backend/logs/*
+!backend/logs/app.log
+
+# Test coverage reports
+coverage/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Debug logs from npm
+npm-debug.log*
