@@ -900,7 +900,7 @@ app.post('/api/products', (req, res) => {
             .prepare(`SELECT ${productFields} FROM products WHERE id = ?`)
             .get(result.lastInsertRowid)
 
-        console.log(`Product created: ${product.id}`)
+        logEvent('info', 'product_created', { productId: product.id })
 
         return res.status(201).json(product)
     } catch (error) {
@@ -1092,7 +1092,7 @@ purchase_unit_cost = ?,
             .prepare(`SELECT ${productFields} FROM products WHERE id = ?`)
             .get(id)
 
-        console.log(`Product updated: ${id}`)
+        logEvent('info', 'product_updated', { productId: id })
 
         return res.status(200).json(product)
     } catch (error) {
@@ -1146,7 +1146,7 @@ app.delete('/api/products/:id', (req, res) => {
 
         db.prepare('DELETE FROM products WHERE id = ?').run(id)
 
-        console.log(`Product deleted: ${id}`)
+        logEvent('info', 'product_deleted', { productId: id })
 
         return res.status(200).json({
             message: 'Product deleted successfully.',
@@ -2455,7 +2455,7 @@ app.post('/api/categories', (req, res) => {
             `)
             .get(result.lastInsertRowid)
 
-        console.log(`Category created: ${category.id}`)
+        logEvent('info', 'category_created', { categoryId: category.id })
 
         return res.status(201).json(category)
     } catch (error) {
