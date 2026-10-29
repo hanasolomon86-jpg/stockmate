@@ -17,6 +17,7 @@ function LowStockAlerts() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+    const [selectedProductIds, setSelectedProductIds] = useState([])
 
   useEffect(() => {
     let isCurrent = true
@@ -53,18 +54,37 @@ function LowStockAlerts() {
     setAlerts(result)
   }
 
+  function handleToggleProduct(productId, isSelected) {
+    setSelectedProductIds((current) =>
+      isSelected
+        ? [...new Set([...current, productId])]
+        : current.filter((id) => id !== productId),
+    )
+  }
+
   async function handleGenerateDrafts() {
     setIsGenerating(true)
     setError('')
     setMessage('')
 
     try {
-      const result = await fetchJson(
-        '/api/stock-alerts/generate-drafts',
-        { method: 'POST' },
-      )
+     const result = await fetchJson(
+  '/api/stock-alerts/generate-drafts',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      productIds: selectedProductIds,
+    }),
+  },
+)
 
       setMessage(result.message)
+      if (result.addedItemCount > 0) {
+  setSelectedProductIds([])
+}
       await refreshAlerts()
 
       // Keep the purchase-order section up to date as well.
@@ -113,9 +133,18 @@ function LowStockAlerts() {
     return 'Ready for draft'
   }
 
-  const eligibleCount = alerts.filter(
+    const eligibleAlerts = alerts.filter(
     (alert) => alert.canGenerateDraft && alert.purchaseUnitCost > 0,
+  )
+
+  const eligibleCount = eligibleAlerts.length
+
+  const selectedCount = eligibleAlerts.filter(
+    (alert) => selectedProductIds.includes(alert.id),
   ).length
+
+  const allEligibleSelected =
+    eligibleCount > 0 && selectedCount === eligibleCount
 
   return (
     <section className="category-management stock-alerts-management" id="low-stock-alerts">
@@ -153,6 +182,21 @@ function LowStockAlerts() {
             <table className="product-table">
               <thead>
                 <tr>
+                  <th scope="col">
+  <input
+    type="checkbox"
+    aria-label="Select all eligible products"
+    checked={allEligibleSelected}
+    disabled={eligibleCount === 0}
+    onChange={(event) => {
+      setSelectedProductIds(
+        event.target.checked
+          ? eligibleAlerts.map((alert) => alert.id)
+          : [],
+      )
+    }}
+  />
+</th>
                   <th scope="col">Product</th>
                   <th scope="col">Available</th>
                   <th scope="col">Minimum</th>
@@ -167,6 +211,17 @@ function LowStockAlerts() {
               <tbody>
                 {alerts.map((alert) => (
                   <tr key={alert.id}>
+                    <td>
+  <input
+    type="checkbox"
+    aria-label={`Select ${alert.name} for purchase draft`}
+    checked={selectedProductIds.includes(alert.id)}
+    disabled={!alert.canGenerateDraft || alert.purchaseUnitCost <= 0}
+    onChange={(event) =>
+      handleToggleProduct(alert.id, event.target.checked)
+    }
+  />
+</td>
                     <td className="product-name">{alert.name}</td>
                     <td>{alert.currentStock} {alert.unit}</td>
                     <td>{alert.minStock}</td>
@@ -187,16 +242,18 @@ function LowStockAlerts() {
 
           <div className="stock-alerts-actions">
             <p className="field-help">
-              {eligibleCount > 0
-                ? `${eligibleCount} product${eligibleCount === 1 ? '' : 's'} eligible for draft generation.`
-                : 'To generate drafts, configure an active preferred supplier and a positive purchase cost for each eligible product.'}
+              {selectedCount > 0
+  ? `${selectedCount} product${selectedCount === 1 ? '' : 's'} selected for draft generation.`
+  : eligibleCount > 0
+    ? `${eligibleCount} products eligible. Select the products you want to order.`
+    : 'To generate drafts, configure an active preferred supplier and a positive purchase cost for each eligible product.'}
             </p>
 
             <button
               className="primary-button"
               type="button"
               onClick={handleGenerateDrafts}
-              disabled={isGenerating || eligibleCount === 0}
+              disabled={isGenerating || selectedCount === 0}
             >
               {isGenerating ? 'Generating drafts...' : 'Generate purchase drafts'}
             </button>
